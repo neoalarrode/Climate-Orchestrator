@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.4
+
+- Regenerado `icon.png`/`icon@2x.png` para cumplir de verdad la
+  especificación de `home-assistant/brands` (sigue siendo la referencia
+  técnica aunque ya no haga falta enviarlo allí): 256×256 y 512×512,
+  borde a borde sin redondear yo mismo las esquinas (HA aplica su propio
+  recorte en el frontend). Quitados `logo.png`/`logo@2x.png` — al ser
+  nuestra marca cuadrada (sin un logotipo apaisado distinto), la propia
+  norma dice que basta con el icono: se usa como fallback del logo
+  automáticamente.
+
 ## 0.2.3
 
 - El icono de la integración (buscador de "Añadir integración", página de

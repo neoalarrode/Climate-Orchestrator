@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.3
+
+- El icono de la integración (buscador de "Añadir integración", página de
+  Dispositivos y servicios) ya no depende de un envío externo a
+  `home-assistant/brands` — se corrige lo dicho en la 0.2.2. Desde HA
+  2026.3, una integración puede servir su propio `icon.png`/`logo.png`
+  (más variantes `@2x`/`dark_*` opcionales) desde una carpeta `brand/`
+  dentro de la propia integración; HA los expone solo en local via
+  `/api/brands/integration/{domain}/icon.png`, sin curación externa ni
+  espera de revisión. Movidos los assets a
+  `custom_components/climate_orchestrator/brand/`.
+
 ## 0.2.2
 
 - Corregido de verdad el problema de la carrera de arranque: el intento

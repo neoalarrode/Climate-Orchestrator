@@ -44,7 +44,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async_add_entities(entities)
 
 
-class PresetNumber(NumberEntity, RestoreNumber):
+class PresetNumber(RestoreNumber):
+    # OJO: heredar SOLO de RestoreNumber, no de "(NumberEntity, RestoreNumber)"
+    # — RestoreNumber ya extiende NumberEntity dentro de HA, asi que
+    # declarar las dos a la vez rompe el MRO (TypeError al importar el
+    # modulo, tumba toda la entrada de la zona: "Cannot create a
+    # consistent method resolution order").
     _attr_has_entity_name = True
     _attr_mode = NumberMode.BOX
     _attr_native_step = 0.5

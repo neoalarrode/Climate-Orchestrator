@@ -63,15 +63,15 @@ architecture for a thermostat.
   priority it also widens the hysteresis margin when the forecast is
   stable, to cut down on-cycles. Presence is never predicted — only
   weather, which is observable data.
-- **Independent heating and cooling actuators**: each side (heating and
-  cooling) is declared separately, and EITHER can be a plain switch or an
-  existing `climate.*` — any combination: a radiator with a thermostatic
-  valve (`climate.*`) for heat and a simple switch-controlled AC for
-  cool, or the other way round, or both switches, or two distinct
-  `climate.*` entities. The two sides never activate at once. If the same
-  unit does both (a reversible heat pump: declare the same `climate.*` in
-  both fields), it's auto-detected and sent a single command with the
-  correct mode for the season.
+- **Detected capability, not manually declared**: no "heat only / cool
+  only / both" dropdown. You declare the actuators you actually have —
+  as many delegated `climate.*` entities as you want (each governed by
+  its OWN native `hvac_modes`, no separate heat/cool fields: a reversible
+  heat pump only needs adding once) plus whatever heating and cooling
+  switches you have, in independent lists — and the zone figures out on
+  its own what it can do, exposing to Home Assistant/Matter/HomeKit
+  exactly the standard set (`off`/`heat`/`cool`/`heat_cool`) its real
+  actuators support. Heat and cool are never activated at once.
 - **Standing mode and preset vs. temporary temperature override**:
   changing the mode (off/heat/cool/auto) or the preset from the
   thermostat is a choice that sticks (restored across restarts, like any

@@ -23,8 +23,9 @@ Eliminar) si dejas de necesitarla.
 
 ## 3. El asistente, paso a paso
 
-**Paso 1 — General**: nombre de la zona, capacidad (solo calor / solo
-frío / calor y frío), prioridad.
+**Paso 1 — General**: nombre de la zona y prioridad. No se pide
+capacidad (calor/frío/ambos): se calcula sola a partir de los actuadores
+que declares en el paso 3.
 
 - **Confort**: actúa en cuanto la zona se sale de rango del preset
   activo.
@@ -39,27 +40,30 @@ frío / calor y frío), prioridad.
 el general) y una entidad `weather.*` con previsión horaria (opcional,
 recomendada — se usa para anticipar cambios exteriores, ver más abajo).
 
-**Paso 3 — Actuador**: calor y frío tienen CADA UNO su propio actuador,
-independiente:
+**Paso 3 — Actuadores**: tres listas, añade tantos como tengas de
+verdad de cada uno (puedes combinar los tres tipos en la misma zona):
 
-- *Switch*: la integración enciende/apaga un `switch.*` con histéresis y
-  anti-ciclado (tiempo mínimo encendido/apagado).
-- *climate.\**: delega en una entidad `climate.*` que ya exista (una
-  válvula termostatica, un aire acondicionado con su propia
-  electrónica...). Se le manda su modo correcto ("heat"/"cool"/"off") y
-  la temperatura objetivo.
+- **climate.\* delegados**: entidades `climate.*` que ya existan (una
+  válvula termostática, un aire acondicionado con su propia
+  electrónica...). Cada una se gobierna por SUS PROPIOS `hvac_modes`
+  nativos — leídos en vivo del propio dispositivo, nunca declarados por
+  ti. Si soporta `heat`, se activa en `heat` cuando toca calentar; si
+  soporta `cool`, en `cool` cuando toca enfriar; si soporta los dos de
+  verdad (una bomba de calor reversible), se le manda el que corresponda
+  cada vez — una única orden, nunca dos que se pisen. **No hay campos
+  separados de "climate para calor" y "climate para frío"**: es la MISMA
+  lista, y cada entidad aporta lo que de verdad sepa hacer.
+- **Switches de calefacción** y **switches de refrigeración**: a
+  diferencia de un `climate.*`, un switch no puede autodeclarar para qué
+  sirve, así que estos sí van en su lista correspondiente. La integración
+  los enciende/apaga con histéresis y anti-ciclado (tiempo mínimo
+  encendido/apagado).
 
-Calor y frío son independientes de verdad: cualquier combinación vale. Un
-radiador puede ser switch simple O tener su propia entidad `climate.*`
-(una válvula termostática, por ejemplo) igual que un aire acondicionado —
-ninguno de los dos campos asume un tipo de dispositivo concreto, solo si
-lo controlas por switch o delegando en un climate.* ya existente. Si tu
-instalación tiene un actuador de calor y otro de frío DISTINTOS (sea cual
-sea su tipo), declara cada uno en su campo — la integración nunca los
-activa a la vez. Si tienes un único equipo reversible (aire acondicionado
-con bomba de calor), pon la MISMA entidad `climate.*` en el campo de calor
-y en el de frío: se detecta solo y se le manda una única orden con el
-modo que toque según la estación, nunca dos órdenes que se pisen.
+La capacidad final de la zona (solo calor / solo frío / ambos) —y por
+tanto qué modos expone Home Assistant y cualquier puente Matter/HomeKit—
+se calcula sola a partir de lo que hayas añadido aquí. Un radiador con
+válvula termostática y un aire acondicionado conviven en la misma zona
+sin declarar nada más; nunca se activan calor y frío a la vez.
 
 **Paso 4 — Presets**: en vez de un horario fijo, declaras una lista de
 presets con nombre y temperatura, como texto: `Confort: 21, Ausente: 17,

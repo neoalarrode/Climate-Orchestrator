@@ -5,28 +5,29 @@ temperatura con el actuador encendido, y cuantos pierde/gana por hora con
 el actuador apagado en funcion de la diferencia con el exterior.
 
 Nada de machine learning ni de un solver: se buscan tramos continuos en el
-historico donde el actuador estuvo en un mismo estado (encendido/apagado)
+historico donde un actuador estuvo en un mismo estado (encendido/apagado)
 al menos `MIN_RUN_MINUTES`, se calcula la pendiente real de temperatura de
-cada tramo, y se toma la MEDIANA de todos los tramos validos (robusta
-frente a un tramo suelto, p.ej. una ventana abierta o una visita que
-toquetea el termostato a mano). El resultado es un numero que se puede
-explicar en una frase: "de media, esta zona sube 0.9°C por hora
-calentando".
+cada tramo, y se toma la MEDIANA de todos los tramos validos de TODOS los
+actuadores de ese lado juntos (robusta frente a un tramo suelto, p.ej. una
+ventana abierta, y frente a tener varios actuadores heterogeneos para el
+mismo lado). El resultado es un numero que se puede explicar en una
+frase: "de media, esta zona sube 0.9°C por hora calentando".
 
-Funciona con los DOS tipos de actuador (ver const.py: cada lado, calor y
-frio, puede ser distinto):
+Funciona con los dos tipos de actuador declarados en una zona (ver
+const.py — ya no hay "actuator_mode", una zona puede tener switches Y
+climate.* delegados a la vez, cualquier combinacion):
 
-  - "switch": se usa directamente su estado on/off del historico — se
-    sabe con certeza cuando estuvo actuando, porque lo enciende/apaga
-    esta misma integracion.
-  - "climate" (delegado en un climate.* ya existente, p.ej. una valvula
-    termostatica): tambien se puede aprender, a partir del atributo
-    `hvac_action` de SU PROPIO historico (heating/cooling frente a
-    idle/off/otro) — la mayoria de integraciones de climate lo publican.
-    Si esa entidad en concreto nunca lo reporta (queda siempre en blanco),
-    sencillamente no se encuentran tramos validos y esa zona se queda con
-    los valores por defecto, marcados `reliable=False` — nunca se inventa
-    una cifra.
+  - Switches (`heat_switches`/`cool_switches`): se usa directamente su
+    estado on/off del historico — se sabe con certeza cuando estuvo
+    actuando, porque lo enciende/apaga esta misma integracion.
+  - climate.* delegados (`climate_entities`): tambien se puede aprender,
+    a partir del atributo `hvac_action` de SU PROPIO historico (heating/
+    cooling frente a idle/off/otro) — la mayoria de integraciones de
+    climate lo publican. Solo se usa la parte de un climate.* que de
+    verdad soporta ese lado (se comprueba su `hvac_modes` en vivo). Si
+    una entidad concreta nunca reporta `hvac_action`, sencillamente no se
+    encuentran tramos validos para ella y no aporta nada — nunca se
+    inventa una cifra.
 """
 
 from __future__ import annotations
@@ -50,11 +51,14 @@ _LOGGER = logging.getLogger(__name__)
 MIN_RUN_MINUTES = 20
 MIN_VALID_RUNS = 3
 
+_Run = tuple[datetime, datetime, str]
+
 
 class _SyntheticState:
-    """Un estado on/off minimo (mismo shape que usa `_state_runs`), para
-    poder tratar un climate.* delegado exactamente igual que un switch
-    propio una vez traducido su `hvac_action` — ver `_climate_actuator_states`."""
+    """Un estado on/off minimo (mismo shape que necesita `_state_runs`),
+    para poder tratar un climate.* delegado exactamente igual que un
+    switch propio una vez traducido su `hvac_action` — ver
+    `_climate_actuator_states`."""
 
     __slots__ = ("state", "last_changed")
 
@@ -63,7 +67,7 @@ class _SyntheticState:
         self.last_changed = last_changed
 
 
-def _state_runs(states: list) -> list[tuple[datetime, datetime, str]]:
+def _state_runs(states: list) -> list[_Run]:
     """Tramos continuos (inicio, fin, estado) de una entidad on/off, a
     partir de la lista de estados que devuelve el recorder (ordenada por
     tiempo, una entrada por cambio de estado real)."""
@@ -91,9 +95,9 @@ def _value_at_or_before(states: list, ts: datetime) -> float | None:
     return best
 
 
-def _learn_rate(temp_states: list, actuator_states: list) -> tuple[float | None, int]:
+def _learn_rate(temp_states: list, runs: list[_Run]) -> tuple[float | None, int]:
     slopes = []
-    for start, end, state in _state_runs(actuator_states):
+    for start, end, state in runs:
         if state != "on":
             continue
         duration_h = (end - start).total_seconds() / 3600
@@ -111,9 +115,9 @@ def _learn_rate(temp_states: list, actuator_states: list) -> tuple[float | None,
     return statistics.median(slopes), len(slopes)
 
 
-def _learn_idle_loss_coeff(temp_states: list, actuator_states: list, outdoor_states: list) -> tuple[float | None, int]:
+def _learn_idle_loss_coeff(temp_states: list, runs: list[_Run], outdoor_states: list) -> tuple[float | None, int]:
     coeffs = []
-    for start, end, state in _state_runs(actuator_states):
+    for start, end, state in runs:
         if state != "off":
             continue
         duration_h = (end - start).total_seconds() / 3600
@@ -162,19 +166,23 @@ def _climate_actuator_states(hass: HomeAssistant, entity_id: str, wanted_action:
     return synthetic
 
 
-def _actuator_states_for_side(hass: HomeAssistant, zone: dict, side: str, wanted_action: str,
-                               start: datetime, end: datetime) -> list | None:
-    """`side` es "heat" o "cool". Devuelve el historico on/off de ese lado
-    (switch propio, o climate.* delegado traducido), o None si ese lado no
-    tiene actuador configurado."""
-    mode = zone.get(f"{side}_actuator_mode", "switch")
-    if mode == "switch":
-        switch = zone.get(f"{side}_switch")
-        return _history_for(hass, switch, start, end) if switch else None
-    if mode == "climate":
-        entity = zone.get(f"{side}_climate_entity")
-        return _climate_actuator_states(hass, entity, wanted_action, start, end) if entity else None
-    return None
+def _runs_for_side(hass: HomeAssistant, zone: dict, side: str, wanted_action: str,
+                    start: datetime, end: datetime) -> list[_Run]:
+    """Tramos on/off combinados de TODOS los actuadores de un lado
+    ("heat" o "cool"): sus switches dedicados, mas cualquier climate.*
+    delegado que soporte ese modo de verdad (comprobado en vivo contra
+    sus `hvac_modes` — nunca una declaracion nuestra, ver const.py).
+    Concatenar tramos de fuentes distintas es seguro: `_learn_rate`/
+    `_learn_idle_loss_coeff` no asumen ningun orden cronologico global."""
+    runs: list[_Run] = []
+    for sw in zone.get(f"{side}_switches") or []:
+        runs.extend(_state_runs(_history_for(hass, sw, start, end)))
+    for entity_id in zone.get("climate_entities") or []:
+        state = hass.states.get(entity_id)
+        supported = (state.attributes.get("hvac_modes") if state else None) or []
+        if side in supported:
+            runs.extend(_state_runs(_climate_actuator_states(hass, entity_id, wanted_action, start, end)))
+    return runs
 
 
 def _compute_model_sync(hass: HomeAssistant, zone: dict, days: int) -> dict:
@@ -196,31 +204,26 @@ def _compute_model_sync(hass: HomeAssistant, zone: dict, days: int) -> dict:
         return model
 
     runs_used = 0
-    capability = zone.get("hvac_capability", "heat")
 
-    heat_states = cool_states = None
+    heat_runs = _runs_for_side(hass, zone, "heat", "heating", start, end)
+    if heat_runs:
+        rate, n = _learn_rate(temp_states, heat_runs)
+        if rate is not None:
+            model["heating_rate_deg_h"] = rate
+            runs_used += n
 
-    if capability in ("heat", "heat_cool"):
-        heat_states = _actuator_states_for_side(hass, zone, "heat", "heating", start, end)
-        if heat_states:
-            rate, n = _learn_rate(temp_states, heat_states)
-            if rate is not None:
-                model["heating_rate_deg_h"] = rate
-                runs_used += n
-
-    if capability in ("cool", "heat_cool"):
-        cool_states = _actuator_states_for_side(hass, zone, "cool", "cooling", start, end)
-        if cool_states:
-            rate, n = _learn_rate(temp_states, cool_states)
-            if rate is not None:
-                model["cooling_rate_deg_h"] = rate
-                runs_used += n
+    cool_runs = _runs_for_side(hass, zone, "cool", "cooling", start, end)
+    if cool_runs:
+        rate, n = _learn_rate(temp_states, cool_runs)
+        if rate is not None:
+            model["cooling_rate_deg_h"] = rate
+            runs_used += n
 
     outdoor_sensor = zone.get("outdoor_temp_sensor")
-    actuator_states_for_idle = heat_states or cool_states
-    if outdoor_sensor and actuator_states_for_idle:
+    idle_runs = heat_runs or cool_runs
+    if outdoor_sensor and idle_runs:
         outdoor_states = _history_for(hass, outdoor_sensor, start, end)
-        coeff, n = _learn_idle_loss_coeff(temp_states, actuator_states_for_idle, outdoor_states)
+        coeff, n = _learn_idle_loss_coeff(temp_states, idle_runs, outdoor_states)
         if coeff is not None:
             model["idle_loss_coeff"] = coeff
             runs_used += n

@@ -6,7 +6,6 @@
         "description": "Climate Orchestrator gestiona cada habitación como su propia zona. Añade una entrada de integración por zona (igual que versatile_thermostat).",
         "data": {
           "name": "Nombre de la zona",
-          "hvac_capability": "Capacidad",
           "priority": "Prioridad"
         }
       },
@@ -20,15 +19,12 @@
         }
       },
       "actuator": {
-        "title": "Actuador",
-        "description": "Calor y frío tienen CADA UNO su propio actuador, independiente — cualquiera puede ser un switch o un climate.* ya existente, en cualquier combinación.",
+        "title": "Actuadores",
+        "description": "No hace falta declarar capacidad de calor/frío a mano: se detecta sola a partir de lo que añadas aquí. Los climate.* delegados se gobiernan por SUS PROPIOS hvac_modes nativos (una bomba de calor reversible solo hace falta añadirla una vez aquí — sin campos separados de calor/frío). Los switches no pueden autodeclararse, así que van en su lista correspondiente. Añade tantos de cada uno como tengas de verdad.",
         "data": {
-          "heat_actuator_mode": "Tipo de actuador de calefacción",
-          "heat_switch": "Switch de calefacción",
-          "heat_climate_entity": "climate.* existente para calefacción",
-          "cool_actuator_mode": "Tipo de actuador de refrigeración",
-          "cool_switch": "Switch de refrigeración",
-          "cool_climate_entity": "climate.* existente para refrigeración (misma entidad que calefacción = bomba de calor reversible)"
+          "climate_entities": "Entidades climate.* existentes en las que delegar",
+          "heat_switches": "Switches de calefacción",
+          "cool_switches": "Switches de refrigeración"
         }
       },
       "presets": {
@@ -80,18 +76,14 @@
         "title": "Editar zona",
         "data": {
           "name": "Nombre de la zona",
-          "hvac_capability": "Capacidad",
           "priority": "Prioridad",
           "current_temp_sensor": "Sensor de temperatura",
           "humidity_sensor": "Sensor de humedad (opcional)",
           "outdoor_temp_sensor": "Sensor exterior propio de esta zona (opcional)",
           "weather_entity": "Entidad weather.* con previsión horaria (opcional)",
-          "heat_actuator_mode": "Tipo de actuador de calefacción",
-          "heat_switch": "Switch de calefacción",
-          "heat_climate_entity": "climate.* existente para calefacción",
-          "cool_actuator_mode": "Tipo de actuador de refrigeración",
-          "cool_switch": "Switch de refrigeración",
-          "cool_climate_entity": "climate.* existente para refrigeración (misma entidad que calefacción = bomba de calor reversible)",
+          "climate_entities": "Entidades climate.* existentes en las que delegar",
+          "heat_switches": "Switches de calefacción",
+          "cool_switches": "Switches de refrigeración",
           "presets_text": "Presets («Nombre: temperatura», separados por comas)",
           "presence_preset": "Nombre del preset con presencia",
           "away_preset": "Nombre del preset sin presencia",

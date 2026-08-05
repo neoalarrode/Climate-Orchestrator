@@ -22,8 +22,9 @@ services → that entry → ⋮ → Delete) when you no longer need it.
 
 ## 3. The wizard, step by step
 
-**Step 1 — General**: zone name, capability (heat only / cool only /
-heat and cool), priority.
+**Step 1 — General**: zone name and priority. No capability
+(heat/cool/both) is asked here: it's computed automatically from the
+actuators you declare in step 3.
 
 - **Comfort**: acts as soon as the zone drifts out of range of the active
   preset.
@@ -37,27 +38,30 @@ this zone's own outdoor sensor (optional, more precise than a global one)
 and a `weather.*` entity with hourly forecast (optional, recommended —
 used to anticipate outdoor changes, see below).
 
-**Step 3 — Actuator**: heating and cooling EACH have their own
-independent actuator:
+**Step 3 — Actuators**: three lists, add as many as you actually have of
+each (you can combine all three in the same zone):
 
-- *Switch*: the integration turns a `switch.*` on/off with hysteresis and
+- **Delegated climate.\***: existing `climate.*` entities (a thermostatic
+  valve, an air conditioner with its own electronics...). Each is
+  governed by its OWN native `hvac_modes` — read live from the device
+  itself, never declared by you. If it supports `heat`, it activates in
+  `heat` when heating is needed; if it supports `cool`, in `cool` when
+  cooling is needed; if it genuinely supports both (a reversible heat
+  pump), it gets whichever is correct each time — a single command,
+  never two stepping on each other. **There are no separate "climate for
+  heat" / "climate for cool" fields** — it's the SAME list, and each
+  entity contributes whatever it can actually do.
+- **Heating switches** and **cooling switches**: unlike a `climate.*`, a
+  switch can't self-report what it's for, so these do go in their
+  matching list. The integration turns them on/off with hysteresis and
   anti short-cycling (minimum on/off time).
-- *climate.\**: delegates to an existing `climate.*` entity (a
-  thermostatic valve, an air conditioner with its own electronics...). It
-  gets sent its correct mode ("heat"/"cool"/"off") and the target
-  temperature.
 
-Heating and cooling are genuinely independent: any combination works. A
-radiator can be a plain switch OR have its own `climate.*` entity (a
-thermostatic valve, for instance), same as an air conditioner — neither
-field assumes a specific device type, only whether you control it by
-switch or by delegating to an existing climate.*. If your setup has a
-DIFFERENT actuator for heating and cooling (whatever their type), declare
-each in its own field — the integration never activates both at once. If
-you have a single reversible unit (heat pump AC), put the SAME
-`climate.*` entity in both the heating and cooling fields: it's
-auto-detected and sent a single command with whichever mode is correct
-for the season, never two commands stepping on each other.
+The zone's final capability (heat only / cool only / both) — and
+therefore which modes Home Assistant and any Matter/HomeKit bridge
+expose — is computed automatically from what you added here. A radiator
+with a thermostatic valve and an air conditioner coexist in the same zone
+without declaring anything else; heating and cooling are never activated
+at once.
 
 **Step 4 — Presets**: instead of a fixed schedule, you declare a list of
 named presets with a temperature, as text: `Comfort: 21, Away: 17, Party:

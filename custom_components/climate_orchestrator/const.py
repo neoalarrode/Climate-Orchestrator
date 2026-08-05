@@ -11,30 +11,36 @@ from __future__ import annotations
 DOMAIN = "climate_orchestrator"
 
 # --------------------------------------------------------------- claves ----
-CONF_HVAC_CAPABILITY = "hvac_capability"       # "heat" | "cool" | "heat_cool"
 
-# Calor y frio tienen CADA UNO su propio actuador, independiente — no un
-# unico "actuator_mode" para toda la zona, y SIN asumir que uno es
-# siempre switch y el otro siempre climate.*: cualquier combinacion vale
-# (un radiador puede tener su propia entidad climate.*, p.ej. una valvula
-# termostatica, igual que un aire acondicionado; y cualquiera de los dos
-# puede ser tambien un simple switch). Hace falta sobre todo para el caso
-# real mas comun de "heat_cool" con DOS EQUIPOS DISTINTOS (no uno
-# reversible): cada lado declara el suyo por separado. Con
-# "heat_actuator_mode"/"cool_actuator_mode" cada uno puede ser "switch"
-# (se enciende/apaga solo) o "climate" (se delega en un climate.* que ya
-# existe) de forma independiente. Si ambos apuntan al MISMO climate.* (un
-# equipo reversible de verdad, p.ej. un aire acondicionado con bomba de
-# calor), climate.py lo detecta y le manda una unica orden con el modo
-# correcto — nunca calor y frio a la vez, y en invierno el propio equipo
-# se activa en "heat" si es el que toca, no se queda apagado ni mal
-# puesto en "cool".
-CONF_HEAT_ACTUATOR_MODE = "heat_actuator_mode"   # "switch" | "climate"
-CONF_HEAT_SWITCH = "heat_switch"
-CONF_HEAT_CLIMATE = "heat_climate_entity"
-CONF_COOL_ACTUATOR_MODE = "cool_actuator_mode"   # "switch" | "climate"
-CONF_COOL_SWITCH = "cool_switch"
-CONF_COOL_CLIMATE = "cool_climate_entity"
+# NADA de "actuator_mode" ni de declarar capacidad de calor/frio a mano:
+# se listan los actuadores que de verdad tiene la zona, y todo lo demas
+# (que puede hacer cada uno, que hvac_modes expone la entidad final)
+# se DEDUCE de ahi en climate.py — nunca una redundancia que el usuario
+# tenga que mantener sincronizada el mismo a mano.
+#
+#   - "climate_entities": lista de climate.* YA EXISTENTES en los que
+#     delegar (una valvula termostatica, un aire acondicionado con su
+#     propia electronica...), tantos como se quiera. Cada uno se gobierna
+#     por SUS PROPIOS hvac_modes nativos (leidos en vivo del propio
+#     climate.*, no declarados aqui) — si soporta "heat", se activa en
+#     "heat" cuando toca calentar; si soporta "cool", en "cool" cuando
+#     toca enfriar; si soporta los dos (un equipo reversible de verdad),
+#     se le manda el que corresponda cada vez, una unica orden, nunca dos
+#     que se pisen. Un radiador con valvula termostatica y un aire
+#     acondicionado conviven en la misma lista sin declarar nada mas.
+#   - "heat_switches"/"cool_switches": listas de switch.* — a diferencia
+#     de un climate.*, un switch no puede autodeclarar para que sirve, asi
+#     que aqui si hace falta decir de que lado es cada uno. Tantos como se
+#     quiera por lado (p.ej. dos radiadores en switches separados que
+#     deben encenderse juntos).
+#
+# La capacidad final de la zona (heat/cool/heat_cool, y por tanto que
+# hvac_modes expone el climate.* de Climate Orchestrator a Home
+# Assistant/Matter/HomeKit) se calcula sola a partir de lo declarado aqui
+# — ver `ClimateOrchestratorZone._compute_capability()` en climate.py.
+CONF_CLIMATE_ENTITIES = "climate_entities"
+CONF_HEAT_SWITCHES = "heat_switches"
+CONF_COOL_SWITCHES = "cool_switches"
 CONF_CURRENT_TEMP_SENSOR = "current_temp_sensor"
 CONF_HUMIDITY_SENSOR = "humidity_sensor"
 CONF_OUTDOOR_TEMP_SENSOR = "outdoor_temp_sensor"

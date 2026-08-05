@@ -65,15 +65,16 @@ hasta 20 segundos". Es la arquitectura correcta para un termostato.
   margen de histéresis cuando la previsión es estable, para reducir
   ciclos de encendido. Nunca se predice presencia — solo clima, que es un
   dato observable.
-- **Calor y frío con actuadores independientes**: cada lado (calor y
-  frío) se declara por separado, y CADA UNO puede ser un switch propio o
-  un `climate.*` ya existente — cualquier combinación: un radiador con
-  válvula termostática (`climate.*`) para calor y un aire acondicionado
-  simple (switch) para frío, o al revés, o los dos switch, o los dos
-  `climate.*` distintos. Nunca se activan los dos lados a la vez. Si el
-  mismo equipo hace ambas cosas (una bomba de calor reversible: se
-  declara el mismo `climate.*` en los dos campos), se detecta solo y se
-  le manda una única orden con el modo correcto según la estación.
+- **Capacidad detectada, no declarada a mano**: nada de elegir "solo
+  calor / solo frío / ambos" en un desplegable. Declaras los actuadores
+  que de verdad tienes — cuantos `climate.*` delegados quieras (cada uno
+  gobernado por SUS PROPIOS `hvac_modes` nativos, sin campos separados de
+  calor/frío: una bomba de calor reversible solo hace falta añadirla una
+  vez) más los switches de calor y de frío que tengas, en listas
+  independientes — y la zona calcula sola qué puede hacer, exponiendo a
+  Home Assistant/Matter/HomeKit exactamente el conjunto estándar
+  (`off`/`heat`/`cool`/`heat_cool`) que sus actuadores reales soportan.
+  Nunca se activan calor y frío a la vez.
 - **Modo y preset persistentes vs. temperatura como anulación temporal**:
   cambiar el modo (apagado/calor/frío/auto) o el preset desde el
   termostato es una elección que se queda (se restaura tras un reinicio,

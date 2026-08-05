@@ -6,7 +6,6 @@
         "description": "Climate Orchestrator manages each room as its own zone. Add one integration entry per zone (like versatile_thermostat).",
         "data": {
           "name": "Zone name",
-          "hvac_capability": "Capability",
           "priority": "Priority"
         }
       },
@@ -20,15 +19,12 @@
         }
       },
       "actuator": {
-        "title": "Actuator",
-        "description": "Heating and cooling EACH have their own independent actuator — either can be a switch or an existing climate.* entity, in any combination.",
+        "title": "Actuators",
+        "description": "No need to declare heating/cooling capability by hand: it's detected from what you add here. Delegated climate.* entities are governed by their OWN native hvac_modes (a reversible heat pump just needs to appear once here — no separate heat/cool fields). Switches can't self-report, so they go in their matching list. Add as many of each as you actually have.",
         "data": {
-          "heat_actuator_mode": "Heating actuator type",
-          "heat_switch": "Heating switch",
-          "heat_climate_entity": "Existing climate.* for heating",
-          "cool_actuator_mode": "Cooling actuator type",
-          "cool_switch": "Cooling switch",
-          "cool_climate_entity": "Existing climate.* for cooling (same entity as heating = reversible heat pump)"
+          "climate_entities": "Existing climate.* entities to delegate to",
+          "heat_switches": "Heating switches",
+          "cool_switches": "Cooling switches"
         }
       },
       "presets": {
@@ -80,18 +76,14 @@
         "title": "Edit zone",
         "data": {
           "name": "Zone name",
-          "hvac_capability": "Capability",
           "priority": "Priority",
           "current_temp_sensor": "Temperature sensor",
           "humidity_sensor": "Humidity sensor (optional)",
           "outdoor_temp_sensor": "This zone's own outdoor sensor (optional)",
           "weather_entity": "weather.* entity with hourly forecast (optional)",
-          "heat_actuator_mode": "Heating actuator type",
-          "heat_switch": "Heating switch",
-          "heat_climate_entity": "Existing climate.* for heating",
-          "cool_actuator_mode": "Cooling actuator type",
-          "cool_switch": "Cooling switch",
-          "cool_climate_entity": "Existing climate.* for cooling (same entity as heating = reversible heat pump)",
+          "climate_entities": "Existing climate.* entities to delegate to",
+          "heat_switches": "Heating switches",
+          "cool_switches": "Cooling switches",
           "presets_text": "Presets (\"Name: temperature\", comma-separated)",
           "presence_preset": "Preset name when present",
           "away_preset": "Preset name when absent",

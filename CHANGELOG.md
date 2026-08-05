@@ -33,11 +33,16 @@ como `custom_component` instalable vía HACS.
 - Aprendizaje de inercia térmica desde el recorder de Home Assistant,
   para ambos tipos de actuador (switch propio, o climate.* delegado via
   su atributo `hvac_action`).
-- Actuadores de calor y frío independientes (switch o climate.* cada
-  uno, en cualquier combinación — un radiador puede tener su propia
-  entidad climate.*, igual que un aire acondicionado puede ser un switch
-  simple), con detección automática de equipo reversible compartido para
-  mandar una única orden con el modo correcto.
+- **Capacidad (calor/frío/ambos) detectada, no declarada a mano**: se
+  añaden los actuadores que de verdad existen — cuantos `climate.*`
+  delegados quieras (gobernados por SUS PROPIOS `hvac_modes` nativos, sin
+  campos separados de calor/frío) más listas de switches de calor y de
+  frío, tantos como se quiera de cada uno — y la zona calcula sola qué
+  puede hacer y qué modos expone a HA/Matter/HomeKit. Un radiador con
+  válvula termostática y un aire acondicionado conviven en la misma zona
+  sin declarar nada más; una bomba de calor reversible se añade una única
+  vez y recibe el modo correcto según la estación, nunca dos órdenes que
+  se pisen.
 - Modo (apagado/calor/frío/auto) y preset activo persistentes vía
   RestoreEntity; temperatura objetivo como anulación temporal con
   caducidad configurable.

@@ -1,0 +1,25 @@
+name: "Climate Orchestrator"
+version: "0.1.0"
+slug: "climate_orchestrator"
+description: "Calefaccion y aire acondicionado adaptativos por presencia, horario e inercia termica, sin cajas negras"
+url: "https://github.com/neoalarrode/Climate-Orchestrator"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+init: false
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8199
+panel_icon: mdi:thermostat-auto
+panel_title: "Climate Orchestrator"
+homeassistant_api: true
+services:
+  - mqtt:need
+ports:
+  8198/tcp: 8198
+ports_description:
+  8198/tcp: "Panel de solo lectura (wallpanel), sin pasar por Ingress. Desactivalo (deja el puerto vacio) si no lo vas a usar."
+options: {}
+schema: {}

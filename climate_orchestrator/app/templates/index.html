@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Climate Orchestrator</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%2724%27%20y2%3D%2724%27%20gradientUnits%3D%27userSpaceOnUse%27%3E%3Cstop%20offset%3D%270%27%20stop-color%3D%27%238b5cf6%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%2724%27%20height%3D%2724%27%20rx%3D%276%27%20fill%3D%27url%28%23g%29%27%2F%3E%3Cpath%20d%3D%27M12%203a4%204%200%200%200-4%204v6.1a5%205%200%201%200%208%200V7a4%204%200%200%200-4-4Zm0%2013a2%202%200%201%201%200%204%202%202%200%200%201%200-4Z%27%20fill%3D%27%230b0a16%27%2F%3E%3C%2Fsvg%3E">
+<style>
+  :root {
+    color-scheme: dark light;
+    --bg: #0b0a16; --bg-alt: #131226; --card: #14132a; --text: #eae8f7; --muted: #8b87ab;
+    --border: #2a2850; --accent: #8b5cf6; --accent-2: #22d3ee; --accent-soft: #8b5cf626; --accent-ink: #0b0a16;
+    --glow: 0 0 0 1px #8b5cf64d, 0 0 24px -6px #8b5cf673;
+    --green: #34d399; --amber: #fbbf24; --red: #fb7185;
+    --green-soft: #34d39920; --amber-soft: #fbbf2420; --red-soft: #fb718520;
+    --radius: 12px; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px -8px rgba(139,92,246,.18);
+    --font-display: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-body: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg:#f2f1fa; --bg-alt:#e7e5f6; --card:#ffffff; --text:#1c1a2e; --muted:#68648c;
+      --border:#dcd9f2; --accent:#7c3aed; --accent-2:#0891b2; --accent-soft:#7c3aed15; --accent-ink:#ffffff;
+      --glow: 0 0 0 1px #7c3aed33, 0 0 20px -8px #7c3aed4d;
+      --green:#159a67; --amber:#b3790a; --red:#e0475f;
+      --green-soft:#159a6715; --amber-soft:#b3790a15; --red-soft:#e0475f15;
+      --shadow: 0 1px 2px rgba(28,26,46,.05), 0 8px 24px -10px rgba(124,58,237,.15);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:#f2f1fa; --bg-alt:#e7e5f6; --card:#ffffff; --text:#1c1a2e; --muted:#68648c;
+    --border:#dcd9f2; --accent:#7c3aed; --accent-2:#0891b2; --accent-soft:#7c3aed15; --accent-ink:#ffffff;
+    --glow: 0 0 0 1px #7c3aed33, 0 0 20px -8px #7c3aed4d;
+    --green:#159a67; --amber:#b3790a; --red:#e0475f;
+    --green-soft:#159a6715; --amber-soft:#b3790a15; --red-soft:#e0475f15;
+    --shadow: 0 1px 2px rgba(28,26,46,.05), 0 8px 24px -10px rgba(124,58,237,.15);
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b0a16; --bg-alt: #131226; --card: #14132a; --text: #eae8f7; --muted: #8b87ab;
+    --border: #2a2850; --accent: #8b5cf6; --accent-2: #22d3ee; --accent-soft: #8b5cf626; --accent-ink: #0b0a16;
+    --glow: 0 0 0 1px #8b5cf64d, 0 0 24px -6px #8b5cf673;
+    --green: #34d399; --amber: #fbbf24; --red: #fb7185;
+    --green-soft: #34d39920; --amber-soft: #fbbf2420; --red-soft: #fb718520;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px -8px rgba(139,92,246,.18);
+  }
+  * { box-sizing: border-box; }
+  html, body { overflow-x: hidden; }
+  body {
+    font-family: var(--font-body);
+    background:
+      linear-gradient(var(--bg-alt) 1px, transparent 1px) 0 0 / 100% 34px,
+      linear-gradient(90deg, var(--bg-alt) 1px, transparent 1px) 0 0 / 34px 100%,
+      var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    max-width: 1080px; margin: 0 auto; padding: 28px 20px 90px;
+    line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .topbar { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; padding-bottom: 18px; border-bottom: 1px solid var(--border); gap: 12px; flex-wrap: wrap; }
+  .topbar h1 { font-family: var(--font-display); font-size: 1.5rem; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+  .brand-mark { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-ink); box-shadow: var(--glow); font-size: 1rem; margin-right: 10px; vertical-align: middle; position: relative; top: -2px; }
+  .subtitle { color: var(--muted); font-size: .9rem; margin-top: 6px; max-width: 56ch; }
+  .topbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .tab { font-family: var(--font-mono); font-size: .78rem; font-weight: 600; letter-spacing: .02em; padding: 9px 14px; border: none; background: none; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .view { display: none; } .view.active { display: block; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 22px; margin-bottom: 16px; position: relative; overflow: hidden; }
+  .card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--accent) 30%, var(--accent-2) 70%, transparent); opacity: .55; }
+  .card h2 { font-family: var(--font-display); font-size: .92rem; font-weight: 700; margin: 0 0 14px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .hint { font-weight: 400; color: var(--muted); font-size: .76rem; margin-left: auto; }
+
+  .zones-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .zone-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px; position: relative; overflow: hidden; }
+  .zone-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--accent) 30%, var(--accent-2) 70%, transparent); opacity: .55; }
+  .zone-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .zone-head h3 { margin: 0; font-size: 1rem; font-family: var(--font-display); }
+  .zone-badge { font-family: var(--font-mono); font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 3px 8px; border-radius: 20px; }
+  .badge-confort { background: var(--green-soft); color: var(--green); }
+  .badge-eco { background: var(--amber-soft); color: var(--amber); }
+  .badge-ausente { background: var(--red-soft); color: var(--red); }
+  .temp-row { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 10px; }
+  .temp-now { font-size: 2.1rem; font-weight: 700; font-family: var(--font-display); }
+  .temp-target { color: var(--muted); font-size: .85rem; }
+  .action-icon { font-size: 1.2rem; }
+  .zone-reason { font-size: .82rem; color: var(--muted); margin: 6px 0 10px; line-height: 1.45; }
+  .zone-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: .72rem; font-family: var(--font-mono); color: var(--muted); }
+  .zone-meta span { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 20px; padding: 2px 8px; }
+  .override-banner { margin-top: 10px; background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; font-size: .78rem; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .plan-strip { display: flex; gap: 4px; margin-top: 12px; overflow-x: auto; padding-bottom: 4px; }
+  .plan-hour { flex: 0 0 auto; width: 40px; text-align: center; font-family: var(--font-mono); font-size: .62rem; color: var(--muted); }
+  .plan-hour .bar { height: 26px; border-radius: 4px; margin-bottom: 3px; display: flex; align-items: flex-end; justify-content: center; }
+  .plan-hour .bar.heat { background: linear-gradient(180deg, var(--red-soft), var(--red)); }
+  .plan-hour .bar.cool { background: linear-gradient(180deg, var(--accent-2)55, var(--accent-2)); }
+  .plan-hour .bar.idle { background: var(--bg-alt); border: 1px dashed var(--border); }
+  .zone-error { color: var(--red); font-size: .85rem; }
+
+  label { font-size: .74rem; font-weight: 600; color: var(--muted); display: block; margin: 10px 0 4px; letter-spacing: .01em; }
+  input, select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-alt); color: var(--text); font-size: .85rem; font-family: var(--font-body); }
+  input[type=checkbox] { width: auto; }
+  .field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px 14px; }
+  .btn { font-family: var(--font-mono); font-size: .78rem; font-weight: 600; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-alt); color: var(--text); cursor: pointer; }
+  .btn:hover { border-color: var(--accent); }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-ink); border: none; box-shadow: var(--glow); }
+  .btn-danger { color: var(--red); border-color: var(--red-soft); }
+  .btn-sm { padding: 4px 10px; font-size: .7rem; }
+  .zone-form { border: 1px dashed var(--border); border-radius: 10px; padding: 16px; margin-top: 14px; }
+  .zone-form-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .schedule-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+  .schedule-row { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: .78rem; background: var(--bg-alt); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+  .schedule-row button { margin-left: auto; }
+  .day-picker { display: flex; gap: 4px; }
+  .day-btn { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-alt); color: var(--muted); font-size: .68rem; font-family: var(--font-mono); cursor: pointer; }
+  .day-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .zone-list-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .zone-list-item:last-child { border-bottom: none; }
+  .status-pill { font-family: var(--font-mono); font-size: .7rem; font-weight: 700; padding: 3px 9px; border-radius: 20px; }
+  .pill-sim { background: var(--amber-soft); color: var(--amber); }
+  .pill-live { background: var(--green-soft); color: var(--green); }
+  .pill-mqtt-ok { background: var(--green-soft); color: var(--green); }
+  .pill-mqtt-bad { background: var(--red-soft); color: var(--red); }
+  .empty { color: var(--muted); font-size: .85rem; text-align: center; padding: 24px 0; }
+  .footer-note { color: var(--muted); font-size: .76rem; text-align: center; margin-top: 30px; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 18px; font-size: .82rem; box-shadow: var(--shadow); z-index: 50; display: none; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <h1><span class="brand-mark">&#127777;</span>Climate Orchestrator</h1>
+    <div class="subtitle">Calefaccion y aire acondicionado por presencia, horario e inercia termica de cada zona. Sin cajas negras: cada decision con su motivo.</div>
+  </div>
+  <div class="topbar-right">
+    <span id="simPill" class="status-pill pill-sim">SIMULACION</span>
+    <span id="mqttPill" class="status-pill pill-mqtt-bad">MQTT: --</span>
+    <button class="btn" id="runNowBtn">Ejecutar ciclo ahora</button>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" data-view="status">Estado actual</button>
+  <button class="tab" data-view="config">Configuracion</button>
+</div>
+
+<div id="view-status" class="view active">
+  <div id="zonesGrid" class="zones-grid"></div>
+  <div id="zonesEmpty" class="empty" style="display:none">No hay zonas configuradas todavia. Ve a la pestana "Configuracion" para anadir la primera.</div>
+</div>
+
+<div id="view-config" class="view">
+  <div class="card">
+    <h2>Zonas <span class="hint" id="zoneCount"></span></h2>
+    <div id="zoneList"></div>
+    <div class="zone-form-actions">
+      <button class="btn btn-primary" id="addZoneBtn">+ Anadir zona</button>
+    </div>
+    <div id="zoneForm"></div>
+  </div>
+
+  <div class="card">
+    <h2>Ajustes generales</h2>
+    <div class="field-row">
+      <div>
+        <label>Entidad weather.* (previsión horaria)</label>
+        <input id="cfg_weather_entity" placeholder="weather.casa">
+      </div>
+      <div>
+        <label>Horizonte del plan (horas)</label>
+        <input id="cfg_horizon_hours" type="number" min="12" max="72">
+      </div>
+      <div>
+        <label>Ciclo de control (segundos)</label>
+        <input id="cfg_cycle_seconds" type="number" min="15">
+      </div>
+      <div>
+        <label>Dias de historico para inercia termica</label>
+        <input id="cfg_history_days" type="number" min="3" max="30">
+      </div>
+    </div>
+    <label style="margin-top:14px"><input type="checkbox" id="cfg_dry_run" style="width:auto;margin-right:6px"> Modo simulacion (no toca actuadores reales)</label>
+  </div>
+
+  <div class="card">
+    <h2>Broker MQTT <span class="hint">necesario para exponer las zonas como climate.* en HA</span></h2>
+    <div class="field-row">
+      <div><label>Host</label><input id="mqtt_host" placeholder="core-mosquitto"></div>
+      <div><label>Puerto</label><input id="mqtt_port" type="number"></div>
+      <div><label>Usuario</label><input id="mqtt_username"></div>
+      <div><label>Contraseña</label><input id="mqtt_password" type="password"></div>
+    </div>
+    <div class="zone-form-actions">
+      <button class="btn btn-primary" id="saveGeneralBtn">Guardar ajustes</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Copia de seguridad</h2>
+    <div class="zone-form-actions">
+      <button class="btn" id="exportBtn">Exportar configuracion</button>
+      <button class="btn" id="importBtn">Importar configuracion</button>
+      <input type="file" id="importFile" accept="application/json" style="display:none">
+    </div>
+  </div>
+</div>
+
+<div class="footer-note">Climate Orchestrator &middot; motor determinista, cada decision con su motivo en texto plano.</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+const DAY_LABELS = ["L","M","X","J","V","S","D"];
+const LEVEL_LABEL = {confort: "Confort", eco: "Eco", ausente: "Ausente"};
+const ACTION_ICON = {heat: "&#128293;", cool: "&#10052;&#65039;", idle: "&#9679;"};
+
+let cfg = null;
+let editingZoneId = null;
+
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.style.display = "none", 3200);
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Error ${res.status}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------- tabs ----
+$$(".tab").forEach(tab => tab.addEventListener("click", () => {
+  $$(".tab").forEach(t => t.classList.remove("active"));
+  $$(".view").forEach(v => v.classList.remove("active"));
+  tab.classList.add("active");
+  $(`#view-${tab.dataset.view}`).classList.add("active");
+}));
+
+// ---------------------------------------------------------------- status ----
+function renderStatus(status) {
+  $("#simPill").textContent = status.zones?.[0]?.reason !== undefined && cfg && cfg.general.dry_run ? "SIMULACION" : (cfg && cfg.general.dry_run ? "SIMULACION" : "EN VIVO");
+  $("#simPill").className = "status-pill " + (cfg && cfg.general.dry_run ? "pill-sim" : "pill-live");
+  $("#mqttPill").textContent = "MQTT: " + (status.mqtt_connected ? "conectado" : "sin conectar");
+  $("#mqttPill").className = "status-pill " + (status.mqtt_connected ? "pill-mqtt-ok" : "pill-mqtt-bad");
+
+  const grid = $("#zonesGrid");
+  const zones = status.zones || [];
+  $("#zonesEmpty").style.display = zones.length ? "none" : "block";
+  grid.innerHTML = zones.map(renderZoneCard).join("");
+
+  $$(".clear-override-btn", grid).forEach(btn => btn.addEventListener("click", async () => {
+    await api(`/api/zones/${btn.dataset.id}/clear_override`, {method: "POST"});
+    toast("Anulacion manual retirada");
+    refreshStatus();
+  }));
+}
+
+function renderZoneCard(z) {
+  if (z.error) {
+    return `<div class="zone-card"><div class="zone-head"><h3>${esc(z.name)}</h3></div><div class="zone-error">${esc(z.error)}</div></div>`;
+  }
+  const badgeClass = z.level === "confort" ? "badge-confort" : (z.level === "ausente" ? "badge-ausente" : "badge-eco");
+  const plan = (z.plan || []).filter(p => !p.historical).slice(0, 12);
+  const maxIdx = plan.length || 1;
+  const planHtml = plan.map(p => {
+    const hh = new Date(p.dt).getHours().toString().padStart(2, "0");
+    return `<div class="plan-hour"><div class="bar ${p.action}" style="height:26px"></div>${hh}</div>`;
+  }).join("");
+  const override = z.manual_override ? `
+    <div class="override-banner">
+      <span>Anulado a mano hasta ${z.manual_override.until.slice(11,16)}</span>
+      <button class="btn btn-sm clear-override-btn" data-id="${z.id}">Quitar</button>
+    </div>` : "";
+  return `
+  <div class="zone-card">
+    <div class="zone-head">
+      <h3>${esc(z.name)}</h3>
+      <span class="zone-badge ${badgeClass}">${LEVEL_LABEL[z.level] || z.level}</span>
+    </div>
+    <div class="temp-row">
+      <span class="action-icon">${ACTION_ICON[z.action] || ""}</span>
+      <span class="temp-now">${z.current_temp?.toFixed?.(1) ?? "--"}&deg;</span>
+      <span class="temp-target">objetivo ${z.target_temp?.toFixed?.(1) ?? "--"}&deg; &middot; exterior ${z.outdoor_temp?.toFixed?.(1) ?? "--"}&deg;</span>
+    </div>
+    <div class="zone-reason">${esc(z.reason || "")}</div>
+    <div class="zone-meta">
+      <span>${z.presence_now === true ? "presencia detectada" : (z.presence_now === false ? "sin presencia" : "sin sensor de presencia")}</span>
+      <span>${z.thermal_model?.reliable ? "inercia termica aprendida" : "inercia termica: estimacion inicial"}</span>
+    </div>
+    ${override}
+    <div class="plan-strip">${planHtml}</div>
+  </div>`;
+}
+
+function esc(s) { return (s ?? "").toString().replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+async function refreshStatus() {
+  try {
+    const status = await api("/api/status");
+    renderStatus(status);
+  } catch (e) { console.error(e); }
+}
+
+$("#runNowBtn").addEventListener("click", async () => {
+  $("#runNowBtn").disabled = true;
+  $("#runNowBtn").textContent = "Ejecutando...";
+  try {
+    const status = await api("/api/run_now", {method: "POST"});
+    renderStatus(status);
+    toast("Ciclo ejecutado");
+  } catch (e) { toast(e.message); }
+  $("#runNowBtn").disabled = false;
+  $("#runNowBtn").textContent = "Ejecutar ciclo ahora";
+});
+
+// ---------------------------------------------------------------- config ----
+function fillGeneralForm() {
+  $("#cfg_weather_entity").value = cfg.weather_entity || "";
+  $("#cfg_horizon_hours").value = cfg.general.horizon_hours;
+  $("#cfg_cycle_seconds").value = cfg.general.cycle_seconds;
+  $("#cfg_history_days").value = cfg.general.history_days_for_inertia;
+  $("#cfg_dry_run").checked = !!cfg.general.dry_run;
+  $("#mqtt_host").value = cfg.mqtt.host || "";
+  $("#mqtt_port").value = cfg.mqtt.port || 1883;
+  $("#mqtt_username").value = cfg.mqtt.username || "";
+  $("#mqtt_password").value = cfg.mqtt.password || "";
+}
+
+$("#saveGeneralBtn").addEventListener("click", async () => {
+  cfg.weather_entity = $("#cfg_weather_entity").value.trim();
+  cfg.general.horizon_hours = parseInt($("#cfg_horizon_hours").value) || 36;
+  cfg.general.cycle_seconds = parseInt($("#cfg_cycle_seconds").value) || 60;
+  cfg.general.history_days_for_inertia = parseInt($("#cfg_history_days").value) || 14;
+  cfg.general.dry_run = $("#cfg_dry_run").checked;
+  cfg.mqtt.host = $("#mqtt_host").value.trim();
+  cfg.mqtt.port = parseInt($("#mqtt_port").value) || 1883;
+  cfg.mqtt.username = $("#mqtt_username").value.trim();
+  cfg.mqtt.password = $("#mqtt_password").value;
+  await api("/api/config", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(cfg)});
+  toast("Ajustes guardados");
+});
+
+function renderZoneList() {
+  $("#zoneCount").textContent = `${cfg.zones.length} zona(s)`;
+  $("#zoneList").innerHTML = cfg.zones.map(z => `
+    <div class="zone-list-item">
+      <span>${esc(z.name)} <span style="color:var(--muted);font-family:var(--font-mono);font-size:.72rem">${z.hvac_capability} &middot; ${z.priority}</span></span>
+      <span>
+        <button class="btn btn-sm edit-zone-btn" data-id="${z.id}">Editar</button>
+        <button class="btn btn-sm btn-danger del-zone-btn" data-id="${z.id}">Borrar</button>
+      </span>
+    </div>`).join("") || `<div class="empty">Sin zonas todavia.</div>`;
+
+  $$(".edit-zone-btn").forEach(b => b.addEventListener("click", () => openZoneForm(cfg.zones.find(z => z.id === b.dataset.id))));
+  $$(".del-zone-btn").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("¿Borrar esta zona?")) return;
+    await api(`/api/zones/${b.dataset.id}`, {method: "DELETE"});
+    await loadConfig();
+    toast("Zona borrada");
+  }));
+}
+
+$("#addZoneBtn").addEventListener("click", () => openZoneForm(null));
+
+let formSchedule = [];
+
+function openZoneForm(zone) {
+  editingZoneId = zone ? zone.id : null;
+  const z = zone || {
+    name: "", enabled: true, hvac_capability: "heat", current_temp_sensor: "", humidity_sensor: "",
+    actuator_mode: "switch", heat_switch: "", cool_switch: "", underlying_climate: "",
+    min_temp: 15, max_temp: 30, deadband: 0.3, min_on_seconds: 300, min_off_seconds: 300,
+    comfort_temp: 21, eco_temp: 18, away_temp: 16, schedule: [], presence_entities: [],
+    presence_overrides_schedule: true, outdoor_temp_sensor: "", priority: "confort", manual_override_hours: 2,
+  };
+  formSchedule = JSON.parse(JSON.stringify(z.schedule || []));
+
+  $("#zoneForm").innerHTML = `
+    <div class="zone-form">
+      <div class="field-row">
+        <div><label>Nombre</label><input id="f_name" value="${esc(z.name)}" placeholder="Salon"></div>
+        <div><label>Capacidad</label><select id="f_capability">
+          <option value="heat" ${z.hvac_capability==="heat"?"selected":""}>Solo calor</option>
+          <option value="cool" ${z.hvac_capability==="cool"?"selected":""}>Solo frio</option>
+          <option value="heat_cool" ${z.hvac_capability==="heat_cool"?"selected":""}>Calor y frio</option>
+        </select></div>
+        <div><label>Prioridad</label><select id="f_priority">
+          <option value="confort" ${z.priority==="confort"?"selected":""}>Confort (actua en cuanto hace falta)</option>
+          <option value="ahorro" ${z.priority==="ahorro"?"selected":""}>Ahorro (arranca lo mas tarde posible)</option>
+          <option value="manual" ${z.priority==="manual"?"selected":""}>Manual (sin gestion automatica)</option>
+        </select></div>
+        <div><label style="margin-top:24px"><input type="checkbox" id="f_enabled" ${z.enabled?"checked":""} style="width:auto;margin-right:6px">Zona activa</label></div>
+      </div>
+
+      <div class="field-row">
+        <div><label>Sensor de temperatura</label><input id="f_temp_sensor" value="${esc(z.current_temp_sensor)}" placeholder="sensor.salon_temperatura"></div>
+        <div><label>Sensor de humedad (opcional)</label><input id="f_humidity_sensor" value="${esc(z.humidity_sensor)}" placeholder="sensor.salon_humedad"></div>
+        <div><label>Sensor exterior propio (opcional)</label><input id="f_outdoor_sensor" value="${esc(z.outdoor_temp_sensor)}" placeholder="sensor.temp_exterior"></div>
+      </div>
+
+      <div class="field-row">
+        <div><label>Actuador</label><select id="f_actuator_mode">
+          <option value="switch" ${z.actuator_mode==="switch"?"selected":""}>Switch (encender/apagar)</option>
+          <option value="climate" ${z.actuator_mode==="climate"?"selected":""}>Delegar en climate.* existente</option>
+        </select></div>
+        <div id="f_heat_switch_wrap"><label>Switch de calor</label><input id="f_heat_switch" value="${esc(z.heat_switch)}" placeholder="switch.radiador_salon"></div>
+        <div id="f_cool_switch_wrap"><label>Switch de frio</label><input id="f_cool_switch" value="${esc(z.cool_switch)}" placeholder="switch.ac_salon"></div>
+        <div id="f_climate_wrap"><label>climate.* a delegar</label><input id="f_underlying_climate" value="${esc(z.underlying_climate)}" placeholder="climate.salon"></div>
+      </div>
+
+      <div class="field-row">
+        <div><label>Temp. confort (&deg;C)</label><input id="f_comfort" type="number" step="0.5" value="${z.comfort_temp}"></div>
+        <div><label>Temp. eco (&deg;C)</label><input id="f_eco" type="number" step="0.5" value="${z.eco_temp}"></div>
+        <div><label>Temp. ausente (&deg;C)</label><input id="f_away" type="number" step="0.5" value="${z.away_temp}"></div>
+        <div><label>Histeresis (&deg;C)</label><input id="f_deadband" type="number" step="0.1" value="${z.deadband}"></div>
+      </div>
+
+      <div class="field-row">
+        <div><label>Temp. min. permitida</label><input id="f_min_temp" type="number" step="0.5" value="${z.min_temp}"></div>
+        <div><label>Temp. max. permitida</label><input id="f_max_temp" type="number" step="0.5" value="${z.max_temp}"></div>
+        <div><label>Antic. minimo encendido (s)</label><input id="f_min_on" type="number" value="${z.min_on_seconds}"></div>
+        <div><label>Antic. minimo apagado (s)</label><input id="f_min_off" type="number" value="${z.min_off_seconds}"></div>
+      </div>
+
+      <label>Entidades de presencia (person./device_tracker./binary_sensor., separadas por coma)</label>
+      <input id="f_presence" value="${esc((z.presence_entities||[]).join(", "))}" placeholder="person.eric, person.pareja">
+      <label style="margin-top:8px"><input type="checkbox" id="f_presence_overrides" ${z.presence_overrides_schedule?"checked":""} style="width:auto;margin-right:6px">La presencia puede anular el horario</label>
+
+      <label>Horario (franjas en "confort"; fuera de ellas, "eco")</label>
+      <div class="schedule-list" id="scheduleList"></div>
+      <div class="field-row" style="align-items:end">
+        <div class="day-picker" id="newDayPicker"></div>
+        <div><label>Inicio</label><input id="newStart" type="time" value="07:00"></div>
+        <div><label>Fin</label><input id="newEnd" type="time" value="23:00"></div>
+        <div><button class="btn btn-sm" id="addWindowBtn" type="button">+ Anadir franja</button></div>
+      </div>
+
+      <div class="zone-form-actions">
+        <button class="btn btn-primary" id="saveZoneBtn">Guardar zona</button>
+        <button class="btn" id="cancelZoneBtn">Cancelar</button>
+      </div>
+    </div>`;
+
+  let newDays = [];
+  const dayPicker = $("#newDayPicker");
+  dayPicker.innerHTML = DAY_LABELS.map((l, i) => `<button type="button" class="day-btn" data-d="${i}">${l}</button>`).join("");
+  $$(".day-btn", dayPicker).forEach(b => b.addEventListener("click", () => {
+    const d = parseInt(b.dataset.d);
+    if (newDays.includes(d)) { newDays = newDays.filter(x => x !== d); b.classList.remove("on"); }
+    else { newDays.push(d); b.classList.add("on"); }
+  }));
+
+  function renderSchedule() {
+    $("#scheduleList").innerHTML = formSchedule.map((w, i) => {
+      const days = (w.days && w.days.length) ? w.days.map(d => DAY_LABELS[d]).join("") : "todos los dias";
+      return `<div class="schedule-row"><span>${days}</span><span>${w.start} - ${w.end}</span><button class="btn btn-sm btn-danger" type="button" data-i="${i}">Quitar</button></div>`;
+    }).join("") || `<div class="empty" style="padding:8px 0">Sin franjas: la zona estara en "eco" todo el dia (salvo proteccion minima).</div>`;
+    $$(".schedule-row button", $("#scheduleList")).forEach(b => b.addEventListener("click", () => {
+      formSchedule.splice(parseInt(b.dataset.i), 1);
+      renderSchedule();
+    }));
+  }
+  renderSchedule();
+
+  $("#addWindowBtn").addEventListener("click", () => {
+    formSchedule.push({days: [...newDays], start: $("#newStart").value, end: $("#newEnd").value});
+    newDays = [];
+    $$(".day-btn", dayPicker).forEach(b => b.classList.remove("on"));
+    renderSchedule();
+  });
+
+  function toggleActuatorFields() {
+    const mode = $("#f_actuator_mode").value;
+    $("#f_heat_switch_wrap").style.display = mode === "switch" ? "" : "none";
+    $("#f_cool_switch_wrap").style.display = mode === "switch" ? "" : "none";
+    $("#f_climate_wrap").style.display = mode === "climate" ? "" : "none";
+  }
+  $("#f_actuator_mode").addEventListener("change", toggleActuatorFields);
+  toggleActuatorFields();
+
+  $("#cancelZoneBtn").addEventListener("click", () => { $("#zoneForm").innerHTML = ""; editingZoneId = null; });
+
+  $("#saveZoneBtn").addEventListener("click", async () => {
+    const payload = {
+      name: $("#f_name").value.trim(), enabled: $("#f_enabled").checked,
+      hvac_capability: $("#f_capability").value, priority: $("#f_priority").value,
+      current_temp_sensor: $("#f_temp_sensor").value.trim(), humidity_sensor: $("#f_humidity_sensor").value.trim(),
+      outdoor_temp_sensor: $("#f_outdoor_sensor").value.trim(),
+      actuator_mode: $("#f_actuator_mode").value, heat_switch: $("#f_heat_switch").value.trim(),
+      cool_switch: $("#f_cool_switch").value.trim(), underlying_climate: $("#f_underlying_climate").value.trim(),
+      comfort_temp: parseFloat($("#f_comfort").value), eco_temp: parseFloat($("#f_eco").value),
+      away_temp: parseFloat($("#f_away").value), deadband: parseFloat($("#f_deadband").value),
+      min_temp: parseFloat($("#f_min_temp").value), max_temp: parseFloat($("#f_max_temp").value),
+      min_on_seconds: parseInt($("#f_min_on").value), min_off_seconds: parseInt($("#f_min_off").value),
+      presence_entities: $("#f_presence").value.split(",").map(s => s.trim()).filter(Boolean),
+      presence_overrides_schedule: $("#f_presence_overrides").checked,
+      schedule: formSchedule,
+    };
+    if (!payload.name || !payload.current_temp_sensor) { toast("Nombre y sensor de temperatura son obligatorios"); return; }
+    if (editingZoneId) {
+      await api(`/api/zones/${editingZoneId}`, {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+    } else {
+      await api("/api/zones", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+    }
+    $("#zoneForm").innerHTML = "";
+    editingZoneId = null;
+    await loadConfig();
+    toast("Zona guardada");
+  });
+}
+
+$("#exportBtn").addEventListener("click", () => { window.location.href = "/api/config/export"; });
+$("#importBtn").addEventListener("click", () => $("#importFile").click());
+$("#importFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    await api("/api/config/import", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(parsed)});
+    await loadConfig();
+    toast("Configuracion importada");
+  } catch (e) { toast("No se pudo importar: " + e.message); }
+});
+
+async function loadConfig() {
+  cfg = await api("/api/config");
+  fillGeneralForm();
+  renderZoneList();
+}
+
+// ---------------------------------------------------------------- init ----
+(async function init() {
+  await loadConfig();
+  await refreshStatus();
+  setInterval(refreshStatus, 5000);
+})();
+</script>
+</body>
+</html>

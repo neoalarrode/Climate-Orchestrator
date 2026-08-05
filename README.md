@@ -46,11 +46,21 @@ hasta 20 segundos". Es la arquitectura correcta para un termostato.
   vía el bus de eventos de HA (`async_track_state_change_event`), no por
   sondeo. Una puerta/ventana abierta pausa la zona en el momento, sin
   esperar a nada.
-- **Presets con nombre en vez de horario fijo**: "Confort: 21, Ausente:
-  17, Fiesta: 23"... tantos como quieras. Se activan solos según la
-  presencia FÍSICA real de la habitación (sensores PIR/mmWave, no solo
-  "en casa" por el móvil) — o a mano, como una elección persistente
-  (igual que el modo calor/frío) hasta que vuelvas a "Automático".
+- **Presets con nombre en vez de horario fijo, configurables como
+  entidades**: "Confort: 21/25, Ausente: 17/28, Fiesta: 23/24"...
+  tantos como quieras, cada uno con su consigna de invierno (calor) y de
+  verano (frío) por separado. Cada consigna es su propia entidad
+  `number.*` — se puede subir un grado el preset "Confort" desde Lovelace
+  o una automatización, sin volver a "Configurar" la zona. Se activan
+  solos según la presencia FÍSICA real de la habitación (sensores
+  PIR/mmWave, no solo "en casa" por el móvil) — o a mano, como una
+  elección persistente hasta que vuelvas a "Automático".
+- **Modo "Auto" único, sin bloquear a mano "solo calor"/"solo frío"**: una
+  zona con calor y frío de verdad expone solamente `off`/`auto` — el
+  System Mode Auto estándar de Matter (consigna baja de calor + consigna
+  alta de frío, decide sola cuál toca cada momento), sin ofrecer un modo
+  "calor" o "frío" separado que tuvieras que elegir tú. Listo para
+  cualquier puente Matter/HomeKit sin traducciones.
 - **Techo y suelo de seguridad siempre activos**: "nunca por debajo de
   X°C en invierno, nunca por encima de X°C en verano", aunque no haya
   nadie — independientes del preset activo o de la presencia.
@@ -76,8 +86,9 @@ hasta 20 segundos". Es la arquitectura correcta para un termostato.
   (`off`/`heat`/`cool`/`heat_cool`) que sus actuadores reales soportan.
   Nunca se activan calor y frío a la vez.
 - **Modo y preset persistentes vs. temperatura como anulación temporal**:
-  cambiar el modo (apagado/calor/frío/auto) o el preset desde el
-  termostato es una elección que se queda (se restaura tras un reinicio,
+  cambiar el modo (apagado/auto, o apagado/calor en una zona de un solo
+  sentido) o el preset desde el termostato es una elección que se queda
+  (se restaura tras un reinicio,
   igual que cualquier termostato real); cambiar la temperatura objetivo es
   una anulación temporal con caducidad configurable, tras la cual la zona
   vuelve sola al preset activo.

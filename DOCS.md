@@ -66,11 +66,14 @@ válvula termostática y un aire acondicionado conviven en la misma zona
 sin declarar nada más; nunca se activan calor y frío a la vez.
 
 **Paso 4 — Presets**: en vez de un horario fijo, declaras una lista de
-presets con nombre y temperatura, como texto: `Confort: 21, Ausente: 17,
-Fiesta: 23`. Tantos como quieras. Por qué no hay horario: una franja
-"07:00-23:00 = confort" no sabe si hay alguien de verdad en la
-habitación — los presets, combinados con presencia real, se adaptan a lo
-que de verdad está pasando.
+presets con nombre y consigna de calor/frío por separado, como texto:
+`Confort: 21/25, Ausente: 17/28, Fiesta: 23/24` (en una zona de un solo
+sentido, basta un valor: `Confort: 21`). Tantos como quieras. Por qué no
+hay horario: una franja "07:00-23:00 = confort" no sabe si hay alguien de
+verdad en la habitación — los presets, combinados con presencia real, se
+adaptan a lo que de verdad está pasando. Este texto solo SIEMBRA el valor
+inicial: nada más crear la zona, cada consigna pasa a ser su propia
+entidad `number.*` (ver punto 5) — el texto no se vuelve a leer.
 
 **Paso 5 — Cambio automático**: eliges qué preset de los que acabas de
 declarar se activa cuando SÍ hay presencia y cuál cuando NO la hay. Estos
@@ -99,7 +102,7 @@ que NO hay nadie en toda la casa), pero no son el caso de uso principal.
 Nunca se predice presencia futura — sería una caja negra —, solo se mide
 la de ahora mismo.
 
-## 5. Presets: automático, o fijado a mano
+## 5. Presets: automático, o fijado a mano — y ajustables como entidades
 
 El preset **"Automático"** (el que aplica por defecto) elige solo entre
 el preset "con presencia" y el "sin presencia" que declaraste, según la
@@ -109,6 +112,14 @@ es una elección **persistente**: se queda fijada (se restaura tras un
 reinicio) hasta que tú mismo vuelvas a poner "Automático". Útil para "hoy
 me quedo en Vacaciones aunque detecte presencia" sin tener que desactivar
 nada.
+
+Cada preset expone además una o dos entidades `number.*` propias (una
+para su consigna de calor, otra para la de frío, según la capacidad de la
+zona) — p.ej. "Confort (calor)" y "Confort (frío)". Se pueden ajustar en
+caliente desde Lovelace o desde una automatización tuya en cualquier
+momento; el valor vivo de esas entidades es lo que usa la zona para
+decidir, no el texto que escribiste en el asistente (ese solo sirvió para
+crearlas la primera vez).
 
 ## 6. Editar una zona
 
@@ -144,7 +155,20 @@ anticipación:
   cuando la previsión es estable (menos ciclos de encendido) y se
   estrecha solo si empeora.
 
-## 9. Límites de seguridad
+## 9. Modo "Auto" (compatible con Matter)
+
+Una zona con calor y frío de verdad (los dos, no un solo sentido) expone
+únicamente los modos `off`/`auto` — nunca un modo "solo calor" o "solo
+frío" que tuvieras que elegir a mano. En modo "Auto" la zona tiene DOS
+consignas activas a la vez (la de calor y la de frío del preset activo,
+ver punto 5): calienta si baja de la de calor, enfría si sube de la de
+frío, y no hace nada entre medias. Es exactamente el System Mode "Auto"
+estándar de Matter (consigna baja + consigna alta), así que cualquier
+puente Matter/HomeKit lo reconoce sin traducciones ni configuración
+aparte. Una zona de un solo sentido (solo calor, o solo frío) sigue
+ofreciendo únicamente ese modo.
+
+## 10. Límites de seguridad
 
 Configurables por zona (paso 6 del asistente): un mínimo que la
 calefacción siempre respeta y un máximo que la refrigeración siempre
@@ -152,17 +176,18 @@ respeta, sea cual sea el preset activo, la presencia o el modo manual.
 Pensado exactamente para "no me importa que no haya nadie, nunca por
 debajo de X en invierno / nunca por encima de X en verano".
 
-## 10. Modo vs. preset vs. temperatura: tres comportamientos distintos
+## 11. Modo vs. preset vs. temperatura: tres comportamientos distintos
 
-- **Cambiar el MODO** (apagado / calor / frío / auto) es una elección que
-  se **queda** — no caduca sola, se restaura tras un reinicio.
+- **Cambiar el MODO** (apagado / auto — o apagado / calor en una zona de
+  un solo sentido, ver punto 9) es una elección que se **queda** — no
+  caduca sola, se restaura tras un reinicio.
 - **Cambiar el PRESET** (a mano, cualquiera de los declarados) también es
   **persistente** — igual que el modo, ver punto 5.
 - **Cambiar la TEMPERATURA** objetivo es una anulación **temporal**: dura
   lo que hayas configurado (por defecto 2h) y después la zona vuelve sola
   al preset activo.
 
-## 11. Inercia térmica aprendida
+## 12. Inercia térmica aprendida
 
 Se aprende de los dos tipos de actuador, no solo de switch: con un
 `switch.*` propio se usa directamente su historial de encendido/apagado;
@@ -173,7 +198,7 @@ reporta, esa zona se queda con valores conservadores por defecto (marcado
 `thermal_model_reliable: false` en los atributos de la entidad) — nunca
 se inventa una cifra.
 
-## 12. Modo simulación
+## 13. Modo simulación
 
 Con "Modo simulación" activo en una zona (por defecto), la integración
 calcula y publica lo que haría (visible en los atributos de la entidad),

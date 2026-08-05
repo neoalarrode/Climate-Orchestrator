@@ -29,7 +29,7 @@
       },
       "presets": {
         "title": "Presets",
-        "description": "Named presets instead of a fixed schedule — Climate Orchestrator switches between them by real presence. Format: \"Name: temperature\" separated by commas. Example: \"Comfort: 21, Away: 17, Party: 23\".",
+        "description": "Named presets instead of a fixed schedule — Climate Orchestrator switches between them by real presence. Format: \"Name: heat/cool\" (separate winter/summer setpoints) or \"Name: temperature\" for single-direction zones, comma-separated. Example: \"Comfort: 21/25, Away: 17/28, Party: 23/24\". This only seeds the initial value — each setpoint then becomes its own number.* entity, adjustable from Lovelace.",
         "data": {
           "presets_text": "Presets"
         }

@@ -8,14 +8,25 @@ seria una caja negra — ver climate.py), se adaptan a lo que de verdad esta
 pasando: si vuelves antes o tarde, la zona reacciona al instante en vez de
 esperar a la hora programada.
 
-Cada zona declara una lista de presets (nombre + temperatura objetivo,
-p.ej. "Confort: 21", "Fiesta: 23", "Vacaciones: 16") y designa cual usar
-si hay presencia y cual si no. `PRESET_AUTO` es el modo por defecto: deja
-que Climate Orchestrator elija solo entre esos dos segun la presencia
-real. Elegir CUALQUIER OTRO preset a mano (termostato, voz, Google Home,
-un puente Matter/HomeKit) es una eleccion PERSISTENTE — igual que el modo
-calor/frio/auto — que se queda fijada hasta que vuelvas a poner
-"Automatico" tu mismo.
+Cada preset lleva DOS consignas independientes — calor ("invierno") y
+frio ("verano") — no una sola, para poder decir "nunca por debajo de 21°C
+en invierno, nunca por encima de 25°C en verano" dentro del MISMO preset
+"Confort", sin duplicar presets por estacion. En una zona de un solo
+sentido (solo calor o solo frio) basta con declarar el lado que aplica.
+
+Estas consignas NO se leen de aqui en directo durante la decision de cada
+ciclo: `parse_presets` solo se usa para SEMBRAR las entidades number.* la
+primera vez que se crea la zona (ver number.py) — a partir de ahi el
+valor vivo de esas entidades manda, para poder ajustarlas desde Lovelace o
+una automatizacion sin volver a "Configurar". Por eso este modulo ya no
+expone la temperatura resuelta de un preset, solo su NOMBRE activo — el
+valor lo busca climate.py en las entidades number.* correspondientes.
+
+`PRESET_AUTO` es el modo por defecto: deja que Climate Orchestrator elija
+solo entre el preset "con presencia" y el "sin presencia" segun la
+presencia real. Elegir CUALQUIER OTRO preset a mano (termostato, voz,
+Google Home, un puente Matter/HomeKit) es una eleccion PERSISTENTE que se
+queda fijada hasta que vuelvas a poner "Automatico" tu mismo.
 """
 
 from __future__ import annotations
@@ -24,9 +35,13 @@ PRESET_AUTO = "Automático"
 
 
 def parse_presets(text: str) -> list[dict]:
-    """Convierte el texto "Nombre: temperatura, Nombre: temperatura..."
-    declarado en el asistente en una lista de presets. Lanza ValueError
-    con un mensaje legible si el texto no tiene el formato esperado."""
+    """Convierte el texto declarado en el asistente en una lista de
+    presets. Cada preset es "Nombre: calor/frio" (dos consignas) o
+    "Nombre: temperatura" (una sola, valida para el lado que corresponda
+    en zonas de un solo sentido). Ejemplo: "Confort: 21/25, Ausente:
+    17/28" o, en una zona solo de calor, "Confort: 21, Ausente: 17".
+    Lanza ValueError con un mensaje legible si el texto no tiene el
+    formato esperado."""
     presets: list[dict] = []
     seen = set()
     for chunk in text.split(","):
@@ -35,32 +50,39 @@ def parse_presets(text: str) -> list[dict]:
             continue
         if ":" not in chunk:
             raise ValueError(f"«{chunk}» no tiene el formato «Nombre: temperatura»")
-        name, temp_str = chunk.split(":", 1)
+        name, temps_str = chunk.split(":", 1)
         name = name.strip()
         if not name or name == PRESET_AUTO:
             raise ValueError(f"«{name}» no es un nombre de preset valido")
-        try:
-            temp = float(temp_str.strip())
-        except ValueError as e:
-            raise ValueError(f"«{temp_str.strip()}» no es una temperatura valida para «{name}»") from e
         if name in seen:
             raise ValueError(f"el preset «{name}» esta repetido")
         seen.add(name)
-        presets.append({"name": name, "target_temp": temp})
+
+        temps_str = temps_str.strip()
+        if "/" in temps_str:
+            heat_str, cool_str = temps_str.split("/", 1)
+            try:
+                heat_temp = float(heat_str.strip())
+                cool_temp = float(cool_str.strip())
+            except ValueError as e:
+                raise ValueError(f"«{temps_str}» no es un par valido «calor/frio» para «{name}»") from e
+        else:
+            try:
+                heat_temp = cool_temp = float(temps_str)
+            except ValueError as e:
+                raise ValueError(f"«{temps_str}» no es una temperatura valida para «{name}»") from e
+
+        presets.append({"name": name, "heat_temp": heat_temp, "cool_temp": cool_temp})
     if not presets:
         raise ValueError("declara al menos un preset")
     return presets
 
 
-def format_presets(presets: list[dict]) -> str:
-    """Inverso de `parse_presets`, para precargar el campo de texto al
-    editar una zona ya creada."""
-    return ", ".join(f"{p['name']}: {p['target_temp']}" for p in presets)
-
-
-def resolve_active_preset(preset_mode: str, presets: list[dict], presence_preset: str,
-                           away_preset: str, presence_now: bool | None) -> tuple[str, float, str]:
-    """Devuelve (nombre_del_preset_activo, temperatura_objetivo, motivo).
+def resolve_active_preset_name(preset_mode: str, preset_names: list[str], presence_preset: str,
+                                away_preset: str, presence_now: bool | None) -> tuple[str, str]:
+    """Devuelve (nombre_del_preset_activo, motivo) — la TEMPERATURA de ese
+    preset se busca aparte, en las entidades number.* que lo respaldan
+    (ver climate.py: `_preset_value`).
 
     `presence_now`: True/False si hay lectura fiable de los sensores de
     presencia FISICA declarados (ver climate.py — pensados para ser
@@ -68,16 +90,11 @@ def resolve_active_preset(preset_mode: str, presets: list[dict], presence_preset
     solo "en casa"), None si no hay ninguno declarado o ninguno da un dato
     fiable ahora mismo.
     """
-    by_name = {p["name"]: p["target_temp"] for p in presets}
-
-    if preset_mode != PRESET_AUTO:
-        if preset_mode in by_name:
-            return preset_mode, by_name[preset_mode], f"preset «{preset_mode}» fijado a mano"
-        # preset borrado de la configuracion pero seguia activo: cae a automatico
-        preset_mode = PRESET_AUTO
+    if preset_mode != PRESET_AUTO and preset_mode in preset_names:
+        return preset_mode, f"preset «{preset_mode}» fijado a mano"
 
     if presence_now is None:
-        return away_preset, by_name.get(away_preset), "automático sin sensor de presencia fiable: usando el preset de ausencia"
+        return away_preset, "automático sin sensor de presencia fiable: usando el preset de ausencia"
     if presence_now:
-        return presence_preset, by_name.get(presence_preset), "automático: presencia detectada en la zona"
-    return away_preset, by_name.get(away_preset), "automático: sin presencia en la zona"
+        return presence_preset, "automático: presencia detectada en la zona"
+    return away_preset, "automático: sin presencia en la zona"

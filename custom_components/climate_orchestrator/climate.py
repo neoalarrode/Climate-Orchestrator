@@ -14,19 +14,27 @@ gratis y un addon externo no.
 Nada de horario: el objetivo de la zona en cada momento lo decide un
 PRESET (ver presets.py) — activado automaticamente segun la presencia
 FISICA real de la habitacion (sensores PIR/mmWave, no "en casa"), o
-fijado a mano. El MODO hvac (apagado/calor/frio/auto) y el PRESET activo
-son elecciones PERSISTENTES del usuario — se restauran solas tras un
-reinicio via RestoreEntity, igual que cualquier otro termostato de HA. La
-TEMPERATURA objetivo, en cambio, es una anulacion TEMPORAL con caducidad
-(`manual_override_hours`): pasado ese tiempo, la zona vuelve sola al
-preset activo.
+fijado a mano. Cada preset lleva DOS consignas (calor/"invierno" y
+frio/"verano"), expuestas como entidades number.* propias (ver
+number.py) para poder ajustarlas en caliente sin volver a "Configurar".
+
+El modo hvac de una zona con calor Y frio de verdad es SIEMPRE "Auto"
+(HVACMode.HEAT_COOL) — nunca se ofrece bloquear a mano "solo calor" o
+"solo frio": eso es exactamente el System Mode Auto estandar de Matter
+(consigna baja de calor + consigna alta de frio, el equipo decide solo
+cual aplica cada momento), asi que esta entidad ya sale lista para
+cualquier puente Matter/HomeKit sin traduccion. Una zona de un solo
+sentido (declarada solo con actuadores de calor, o solo de frio) sigue
+ofreciendo unicamente ese modo — "Auto" no tendria sentido ahi.
+
+El PRESET activo es una eleccion PERSISTENTE del usuario — se restaura
+sola tras un reinicio via RestoreEntity, igual que cualquier otro
+termostato de HA. La TEMPERATURA objetivo, en cambio, es una anulacion
+TEMPORAL con caducidad (`manual_override_hours`): pasado ese tiempo, la
+zona vuelve sola al preset activo.
 
 Tampoco hay "capacidad" (calor/frio/ambos) declarada a mano: se DEDUCE en
-vivo de los actuadores de verdad configurados (ver `_refresh_hvac_modes`)
-— y por tanto los `hvac_modes` que esta entidad expone a Home Assistant
-son siempre el subconjunto estandar (off/heat/cool/heat_cool) que sus
-actuadores reales soportan, listo para que cualquier puente Matter/
-HomeKit lo reconozca sin traducciones especiales.
+vivo de los actuadores de verdad configurados (ver `_refresh_hvac_modes`).
 """
 
 from __future__ import annotations
@@ -37,16 +45,17 @@ from datetime import timedelta
 from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature, HVACAction, HVACMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
+from homeassistant.components.climate.const import ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_point_in_time, async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.util import dt as dt_util
+from homeassistant.util import dt as dt_util, slugify
 
 from . import outdoor, presets as presets_module, scheduler, thermal_model
 from .const import (
-    CONF_AWAY_PRESET,
     CONF_CLIMATE_ENTITIES,
     CONF_COOL_SWITCHES,
     CONF_CURRENT_TEMP_SENSOR,
@@ -63,6 +72,7 @@ from .const import (
     CONF_OUTDOOR_TEMP_SENSOR,
     CONF_PRESENCE_ENTITIES,
     CONF_PRESENCE_PRESET,
+    CONF_AWAY_PRESET,
     CONF_PRESETS_TEXT,
     CONF_PRIORITY,
     CONF_SIMULATE,
@@ -94,7 +104,6 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     _attr_should_poll = False
     _attr_target_temperature_step = 0.5
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
@@ -124,7 +133,9 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._attr_hvac_mode = self._default_hvac_mode(capability)
         self._attr_hvac_action = HVACAction.IDLE
         self._attr_current_temperature = None
-        self._attr_target_temperature = self._presets[0]["target_temp"] if self._presets else 21.0
+        self._attr_target_temperature = None
+        self._attr_target_temperature_low = None
+        self._attr_target_temperature_high = None
         self._attr_available = True
 
         self._outdoor_forecast: list[float] = []
@@ -133,7 +144,8 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._reason = "sin calcular todavia"
         self._active_preset_name: str | None = None
 
-        self._temp_override_value: float | None = None
+        self._temp_override_heat: float | None = None
+        self._temp_override_cool: float | None = None
         self._temp_override_until = None
         self._unsub_override_expiry = None
 
@@ -179,20 +191,29 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         return capability
 
     def _refresh_hvac_modes(self) -> set[str]:
-        """Recalcula `_attr_hvac_modes` a partir de la capacidad real
-        actual. Se llama al crear la entidad y en cada refresco de
+        """Recalcula `_attr_hvac_modes` (y las features soportadas) a
+        partir de la capacidad real actual. Una zona con calor Y frio
+        expone UNICAMENTE "Auto" (HVACMode.HEAT_COOL) — nunca se deja
+        bloquear a mano a "solo calor"/"solo frio": es el System Mode
+        Auto estandar de Matter, con doble consigna (baja de calor, alta
+        de frio) en vez de una sola. Una zona de un solo sentido expone
+        solo ese modo. Se llama al crear la entidad y en cada refresco de
         previsión — por si un climate.* delegado todavia no estaba
         disponible al arrancar HA, o cambia de capacidad tras un reload de
         su propia integracion."""
         capability = self._compute_capability()
-        modes = [HVACMode.OFF]
-        if "heat" in capability:
-            modes.append(HVACMode.HEAT)
-        if "cool" in capability:
-            modes.append(HVACMode.COOL)
         if {"heat", "cool"} <= capability:
-            modes.append(HVACMode.HEAT_COOL)
-        self._attr_hvac_modes = modes
+            self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT_COOL]
+            self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE_RANGE | ClimateEntityFeature.PRESET_MODE
+        elif "cool" in capability:
+            self._attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL]
+            self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
+        elif "heat" in capability:
+            self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
+            self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
+        else:
+            self._attr_hvac_modes = [HVACMode.OFF]
+            self._attr_supported_features = ClimateEntityFeature.PRESET_MODE
         return capability
 
     @staticmethod
@@ -207,11 +228,9 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
     def _effective_capability(self) -> str:
         """La capacidad que rige AHORA MISMO, directamente del modo hvac
-        activo — "heat"/"cool" si el usuario bloqueo la zona a uno solo,
-        "heat_cool" en automatico con ambos disponibles. No hace falta
-        consultar nada mas: un modo solo aparece en `_attr_hvac_modes` (y
-        por tanto solo se puede seleccionar) si la capacidad real lo
-        soporta."""
+        activo. Con el diseño de arriba (Auto o nada para zonas duales)
+        esto coincide siempre con la capacidad real: no hace falta
+        consultar nada mas."""
         return {
             HVACMode.HEAT: "heat", HVACMode.COOL: "cool", HVACMode.HEAT_COOL: "heat_cool",
         }.get(self._attr_hvac_mode, "none")
@@ -238,11 +257,6 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             last_preset = last_state.attributes.get("preset_mode")
             if last_preset in (self._attr_preset_modes or []):
                 self._attr_preset_mode = last_preset
-            if last_state.attributes.get(ATTR_TEMPERATURE) is not None:
-                try:
-                    self._attr_target_temperature = float(last_state.attributes[ATTR_TEMPERATURE])
-                except (TypeError, ValueError):
-                    pass
 
         watched = [e for e in [
             self.zone.get(CONF_CURRENT_TEMP_SENSOR),
@@ -269,7 +283,8 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         await self._async_refresh_forecast()
 
     async def _handle_override_expiry(self, now) -> None:
-        self._temp_override_value = None
+        self._temp_override_heat = None
+        self._temp_override_cool = None
         self._temp_override_until = None
         self._unsub_override_expiry = None
         await self._async_decide_and_act()
@@ -312,6 +327,24 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 return True
         return False
 
+    def _preset_value(self, preset_name: str, side: str) -> float | None:
+        """Consigna VIVA (calor o frio) de un preset — se busca en su
+        entidad number.* propia (ver number.py), no en el texto estatico
+        de la configuracion: asi ajustarla desde Lovelace/una
+        automatizacion se nota al instante, sin tener que volver a
+        "Configurar" la zona."""
+        unique_id = f"{self.entry.entry_id}_preset_{slugify(preset_name)}_{side}"
+        entity_id = er.async_get(self.hass).async_get_entity_id("number", DOMAIN, unique_id)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+            return None
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
+
     # ---------------------------------------------------- previsión cara ----
 
     async def _async_refresh_forecast(self) -> None:
@@ -342,40 +375,47 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         min_temp = float(self.zone.get(CONF_MIN_TEMP, DEFAULT_MIN_TEMP))
         max_temp = float(self.zone.get(CONF_MAX_TEMP, DEFAULT_MAX_TEMP))
         capability = self._effective_capability()
+        wants_heat = capability in ("heat", "heat_cool")
+        wants_cool = capability in ("cool", "heat_cool")
 
-        preset_name, preset_target, preset_reason = presets_module.resolve_active_preset(
-            self._attr_preset_mode, self._presets,
+        preset_name, preset_reason = presets_module.resolve_active_preset_name(
+            self._attr_preset_mode, [p["name"] for p in self._presets],
             self.zone.get(CONF_PRESENCE_PRESET, ""), self.zone.get(CONF_AWAY_PRESET, ""),
             self._presence_now(),
         )
         self._active_preset_name = preset_name
-        base_target = preset_target if preset_target is not None else self._attr_target_temperature
+        preset_heat = self._preset_value(preset_name, "heat") if wants_heat else None
+        preset_cool = self._preset_value(preset_name, "cool") if wants_cool else None
 
         now = dt_util.now()
-        override_active = (
-            self._temp_override_value is not None and self._temp_override_until is not None and now < self._temp_override_until
-        )
+        override_active = self._temp_override_until is not None and now < self._temp_override_until
 
         if self._attr_hvac_mode == HVACMode.OFF:
-            action, target_temp = "idle", base_target
+            action = "idle"
+            heat_target, cool_target = preset_heat, preset_cool
             self._reason = "apagado desde el termostato"
         elif self._door_window_open():
-            action, target_temp = "idle", base_target
+            action = "idle"
+            heat_target, cool_target = preset_heat, preset_cool
             self._reason = "puerta/ventana abierta: en pausa"
         elif override_active:
-            target_temp = self._temp_override_value
-            if capability in ("heat", "heat_cool") and current_temp < target_temp - deadband:
+            heat_target = self._temp_override_heat if wants_heat else None
+            cool_target = self._temp_override_cool if wants_cool else None
+            if heat_target is None and wants_heat:
+                heat_target = preset_heat
+            if cool_target is None and wants_cool:
+                cool_target = preset_cool
+            if wants_heat and current_temp < (heat_target or current_temp) - deadband:
                 action = "heat"
-            elif capability in ("cool", "heat_cool") and current_temp > target_temp + deadband:
+            elif wants_cool and current_temp > (cool_target or current_temp) + deadband:
                 action = "cool"
             else:
                 action = "idle"
-            self._reason = f"objetivo anulado a mano hasta las {self._temp_override_until.strftime('%H:%M')} ({target_temp:.1f}°C)"
+            self._reason = f"objetivo anulado a mano hasta las {self._temp_override_until.strftime('%H:%M')}"
         else:
-            target_temp = base_target
-            self._attr_target_temperature = target_temp
+            heat_target, cool_target = preset_heat, preset_cool
             action, decide_reason = scheduler.decide_action(
-                current_temp=current_temp, target_temp=target_temp, hvac_capability=capability,
+                current_temp=current_temp, heat_target=heat_target, cool_target=cool_target,
                 priority=self.zone.get(CONF_PRIORITY, "confort"), deadband=deadband,
                 min_temp=min_temp, max_temp=max_temp,
                 outdoor_now=self._outdoor_now, outdoor_forecast=self._outdoor_forecast,
@@ -385,13 +425,25 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             )
             self._reason = f"{preset_reason} — {decide_reason}"
 
-        real_action = await self._async_execute(action, target_temp, capability)
+        self._update_target_attrs(heat_target, cool_target)
+        target_for_actuator = heat_target if action == "heat" else cool_target if action == "cool" else (heat_target or cool_target)
+        real_action = await self._async_execute(action, target_for_actuator, capability)
         self._attr_hvac_action = _ACTION_MAP.get(real_action, HVACAction.IDLE)
         self.async_write_ha_state()
 
+    def _update_target_attrs(self, heat_target: float | None, cool_target: float | None) -> None:
+        if self._attr_hvac_mode == HVACMode.HEAT_COOL:
+            self._attr_target_temperature = None
+            self._attr_target_temperature_low = heat_target
+            self._attr_target_temperature_high = cool_target
+        else:
+            self._attr_target_temperature = heat_target if self._attr_hvac_mode == HVACMode.HEAT else cool_target
+            self._attr_target_temperature_low = None
+            self._attr_target_temperature_high = None
+
     # ------------------------------------------------------ actuadores ----
 
-    async def _async_execute(self, action: str, target_temp: float, capability: str) -> str:
+    async def _async_execute(self, action: str, target_temp: float | None, capability: str) -> str:
         """Ejecuta la decision sobre TODOS los actuadores declarados —
         tantos como se quiera de cada tipo (ver const.py). `action` ya
         viene decidido como uno solo ("heat"/"cool"/"idle") por
@@ -408,6 +460,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         de estado."""
         simulate = bool(self.zone.get(CONF_SIMULATE, True))
         real_heat = real_cool = False
+        target_temp = target_temp if target_temp is not None else self._attr_current_temperature or 20.0
 
         if capability in ("heat", "heat_cool"):
             for sw in self.zone.get(CONF_HEAT_SWITCHES) or []:
@@ -484,13 +537,26 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     # --------------------------------------------------------- comandos ----
 
     async def async_set_temperature(self, **kwargs) -> None:
-        temperature = kwargs.get(ATTR_TEMPERATURE)
-        if temperature is None:
+        single = kwargs.get(ATTR_TEMPERATURE)
+        low = kwargs.get(ATTR_TARGET_TEMP_LOW)
+        high = kwargs.get(ATTR_TARGET_TEMP_HIGH)
+        if single is None and low is None and high is None:
             return
+
+        if self._attr_hvac_mode == HVACMode.HEAT_COOL:
+            if low is not None:
+                self._temp_override_heat = float(low)
+            if high is not None:
+                self._temp_override_cool = float(high)
+        elif self._attr_hvac_mode == HVACMode.HEAT and single is not None:
+            self._temp_override_heat = float(single)
+        elif self._attr_hvac_mode == HVACMode.COOL and single is not None:
+            self._temp_override_cool = float(single)
+        else:
+            return
+
         hours = float(self.zone.get(CONF_MANUAL_OVERRIDE_HOURS, DEFAULT_MANUAL_OVERRIDE_HOURS))
-        self._temp_override_value = float(temperature)
         self._temp_override_until = dt_util.now() + timedelta(hours=hours)
-        self._attr_target_temperature = self._temp_override_value
 
         if self._unsub_override_expiry:
             self._unsub_override_expiry()

@@ -56,7 +56,11 @@ PRIORITY_OPTIONS = [
 
 PRESETS_TEXT_DESCRIPTION = (
     'Un preset por cada situación que quieras distinguir, separados por comas: '
-    '"Nombre: temperatura". Ejemplo: "Confort: 21, Ausente: 17, Fiesta: 23"'
+    '"Nombre: calor/frío" (consignas de invierno y verano por separado) o '
+    '"Nombre: temperatura" si la zona es de un solo sentido. Ejemplo: '
+    '"Confort: 21/25, Ausente: 17/28, Fiesta: 23/24". Esto solo siembra el '
+    'valor inicial: luego cada consigna es su propia entidad number.*, '
+    'ajustable desde Lovelace.'
 )
 
 
@@ -167,7 +171,7 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._preset_names = [p["name"] for p in parsed]
                 return await self.async_step_preset_roles()
 
-        schema = vol.Schema({vol.Required(CONF_PRESETS_TEXT, default=self._data.get(CONF_PRESETS_TEXT, "Confort: 21, Ausente: 17")): str})
+        schema = vol.Schema({vol.Required(CONF_PRESETS_TEXT, default=self._data.get(CONF_PRESETS_TEXT, "Confort: 21/25, Ausente: 17/28")): str})
         description_placeholders = {"error": getattr(self, "_preset_error", ""), "format": PRESETS_TEXT_DESCRIPTION}
         return self.async_show_form(step_id="presets", data_schema=schema, errors=errors, description_placeholders=description_placeholders)
 
@@ -273,7 +277,7 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(CONF_CLIMATE_ENTITIES, default=current.get(CONF_CLIMATE_ENTITIES, [])): _entity("climate", multiple=True),
             vol.Optional(CONF_HEAT_SWITCHES, default=current.get(CONF_HEAT_SWITCHES, [])): _entity("switch", multiple=True),
             vol.Optional(CONF_COOL_SWITCHES, default=current.get(CONF_COOL_SWITCHES, [])): _entity("switch", multiple=True),
-            vol.Required(CONF_PRESETS_TEXT, default=current.get(CONF_PRESETS_TEXT, "Confort: 21, Ausente: 17")): str,
+            vol.Required(CONF_PRESETS_TEXT, default=current.get(CONF_PRESETS_TEXT, "Confort: 21/25, Ausente: 17/28")): str,
             vol.Required(CONF_PRESENCE_PRESET, default=current.get(CONF_PRESENCE_PRESET, "Confort")): str,
             vol.Required(CONF_AWAY_PRESET, default=current.get(CONF_AWAY_PRESET, "Ausente")): str,
             vol.Required(CONF_DEADBAND, default=current.get(CONF_DEADBAND, DEFAULT_DEADBAND)): selector.NumberSelector(

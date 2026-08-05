@@ -64,10 +64,14 @@ without declaring anything else; heating and cooling are never activated
 at once.
 
 **Step 4 — Presets**: instead of a fixed schedule, you declare a list of
-named presets with a temperature, as text: `Comfort: 21, Away: 17, Party:
-23`. As many as you want. Why no schedule: a "07:00-23:00 = comfort"
-window doesn't know if anyone's really in the room — presets, combined
-with real presence, adapt to what's actually happening.
+named presets with separate heat/cool setpoints, as text: `Comfort:
+21/25, Away: 17/28, Party: 23/24` (a single value like `Comfort: 21`
+works for a single-direction zone). As many as you want. Why no
+schedule: a "07:00-23:00 = comfort" window doesn't know if anyone's
+really in the room — presets, combined with real presence, adapt to
+what's actually happening. This text only SEEDS the initial value: right
+after the zone is created, each setpoint becomes its own `number.*`
+entity (see point 5) — the text isn't read again.
 
 **Step 5 — Automatic switching**: choose which of the presets you just
 declared activates when there IS presence and which when there ISN'T.
@@ -93,7 +97,7 @@ an extra signal (useful mainly to know NOBODY is anywhere in the house),
 but they aren't the primary use case. Future presence is never
 predicted — that would be a black box — only what's measured right now.
 
-## 5. Presets: automatic, or pinned by hand
+## 5. Presets: automatic, or pinned by hand — and adjustable as entities
 
 The **"Auto"** preset (the default) picks between the "with presence" and
 "without presence" presets you declared, based on physical presence
@@ -102,6 +106,13 @@ card, Google Home, Alexa, or a Matter/HomeKit bridge — is a **standing**
 choice: it stays pinned (restored across restarts) until you set it back
 to "Auto" yourself. Useful for "I'm staying on Vacation mode today even
 if it detects presence" without disabling anything.
+
+Each preset also exposes one or two `number.*` entities of its own (one
+for its heat setpoint, one for its cool setpoint, depending on the
+zone's capability) — e.g. "Comfort (heat)" and "Comfort (cool)". They can
+be adjusted live from Lovelace or your own automation at any time; the
+zone uses the live value of those entities to decide, not the text you
+typed in the wizard (that only created them the first time).
 
 ## 6. Editing a zone
 
@@ -135,24 +146,37 @@ comes from:
 - In **"savings"** priority, the hysteresis margin also widens when the
   forecast is stable (fewer on-cycles) and narrows only if it worsens.
 
-## 9. Safety limits
+## 9. "Auto" mode (Matter-ready)
+
+A zone with genuine heating AND cooling exposes only `off`/`auto` modes —
+never a "heat only" or "cool only" mode for you to pick by hand. In
+"Auto" mode the zone has TWO active setpoints at once (the heat and cool
+setpoints of the active preset, see point 5): it heats if it drops below
+the heat one, cools if it rises above the cool one, and does nothing in
+between. This is exactly Matter's standard "Auto" System Mode (a low
+setpoint + a high setpoint), so any Matter/HomeKit bridge recognizes it
+with no translation or extra setup. A single-direction zone (heat only,
+or cool only) still exposes just that one mode.
+
+## 10. Safety limits
 
 Configurable per zone (wizard step 6): a minimum that heating always
 respects and a maximum that cooling always respects, no matter the active
 preset, presence, or manual mode. Built exactly for "I don't care if
 nobody's home, never below X in winter / never above X in summer".
 
-## 10. Mode vs. preset vs. temperature: three different behaviors
+## 11. Mode vs. preset vs. temperature: three different behaviors
 
-- **Changing the MODE** (off / heat / cool / auto) is a choice that
-  **sticks** — it doesn't expire, it's restored across restarts.
+- **Changing the MODE** (off / auto — or off / heat for a
+  single-direction zone, see point 9) is a choice that **sticks** — it
+  doesn't expire, it's restored across restarts.
 - **Changing the PRESET** (by hand, any of the declared ones) is also
   **standing** — same as the mode, see point 5.
 - **Changing the target TEMPERATURE** is a **temporary** override: it
   lasts however long you configured (2h by default) and afterwards the
   zone returns to the active preset on its own.
 
-## 11. Learned thermal inertia
+## 12. Learned thermal inertia
 
 Learned from both actuator types, not just switches: a plain `switch.*`
 uses its own on/off history directly; a delegated `climate.*` uses the
@@ -162,7 +186,7 @@ never does, that zone simply keeps conservative defaults (flagged
 `thermal_model_reliable: false` in the entity's attributes) — never a
 made-up number.
 
-## 12. Simulation mode
+## 13. Simulation mode
 
 With "Simulation mode" on for a zone (default), the integration computes
 and publishes what it would do (visible in the entity's attributes), but

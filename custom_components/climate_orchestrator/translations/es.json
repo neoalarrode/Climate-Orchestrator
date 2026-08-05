@@ -29,7 +29,7 @@
       },
       "presets": {
         "title": "Presets",
-        "description": "Presets con nombre en vez de un horario fijo — Climate Orchestrator cambia entre ellos según la presencia real. Formato: \"Nombre: temperatura\" separados por comas. Ejemplo: \"Confort: 21, Ausente: 17, Fiesta: 23\".",
+        "description": "Presets con nombre en vez de un horario fijo — Climate Orchestrator cambia entre ellos según la presencia real. Formato: \"Nombre: calor/frío\" (consignas de invierno y verano por separado) o \"Nombre: temperatura\" para zonas de un solo sentido, separados por comas. Ejemplo: \"Confort: 21/25, Ausente: 17/28, Fiesta: 23/24\". Esto solo siembra el valor inicial: luego cada consigna es su propia entidad number.*, ajustable desde Lovelace.",
         "data": {
           "presets_text": "Presets"
         }

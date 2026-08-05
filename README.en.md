@@ -45,11 +45,20 @@ architecture for a thermostat.
 - **Reacts instantly** to temperature, presence, and doors/windows — via
   HA's event bus (`async_track_state_change_event`), not polling. An open
   door/window pauses the zone the moment it happens.
-- **Named presets instead of a fixed schedule**: "Comfort: 21, Away: 17,
-  Party: 23"... as many as you want. They switch automatically based on
-  the room's real PHYSICAL presence (PIR/mmWave sensors, not just "home"
-  on a phone) — or by hand, as a standing choice (like the heat/cool
-  mode) until you set it back to "Auto".
+- **Named presets instead of a fixed schedule, configurable as
+  entities**: "Comfort: 21/25, Away: 17/28, Party: 23/24"... as many as
+  you want, each with its own winter (heat) and summer (cool) setpoint.
+  Each setpoint is its own `number.*` entity — bump "Comfort" up a degree
+  from Lovelace or an automation, no need to go back into "Configure".
+  They switch automatically based on the room's real PHYSICAL presence
+  (PIR/mmWave sensors, not just "home" on a phone) — or by hand, as a
+  standing choice until you set it back to "Auto".
+- **Single "Auto" mode, no manual heat/cool lock**: a zone with real
+  heating and cooling exposes only `off`/`auto` — Matter's standard Auto
+  System Mode (a low heat setpoint + a high cool setpoint, it decides on
+  its own which applies each moment), with no separate "heat" or "cool"
+  mode for you to pick. Ready for any Matter/HomeKit bridge with no
+  translation needed.
 - **Always-enforced safety ceiling and floor**: "never below X°C in
   winter, never above X°C in summer", even with nobody home — independent
   of the active preset or presence.
@@ -73,7 +82,8 @@ architecture for a thermostat.
   exactly the standard set (`off`/`heat`/`cool`/`heat_cool`) its real
   actuators support. Heat and cool are never activated at once.
 - **Standing mode and preset vs. temporary temperature override**:
-  changing the mode (off/heat/cool/auto) or the preset from the
+  changing the mode (off/auto, or off/heat for a single-direction zone)
+  or the preset from the
   thermostat is a choice that sticks (restored across restarts, like any
   real thermostat); changing the target temperature is a temporary
   override with a configurable expiry, after which the zone returns to

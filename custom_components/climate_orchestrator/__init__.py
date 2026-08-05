@@ -1,7 +1,9 @@
 """Climate Orchestrator: calefaccion y aire acondicionado adaptativos por
-presencia, horario e inercia termica real de cada zona. Sin cajas negras.
+presencia, presets e inercia termica real de cada zona. Sin cajas negras.
 
-Una entrada de configuracion = una zona (ver config_flow.py)."""
+Una entrada de configuracion = una zona (ver config_flow.py). Dos
+plataformas: "climate" (la zona en si) y "number" (las consignas de calor
+y frio de cada preset, como entidades ajustables — ver number.py)."""
 
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 
-PLATFORMS = ["climate"]
+PLATFORMS = ["climate", "number"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

@@ -55,8 +55,8 @@ REFERENCE_RATE_DEG_H = 1.0        # tasa de referencia (°C/h) a partir de la cu
 
 def decide_action(
     current_temp: float,
-    target_temp: float,
-    hvac_capability: str,
+    heat_target: float | None,
+    cool_target: float | None,
     priority: str,
     deadband: float,
     min_temp: float,
@@ -69,13 +69,20 @@ def decide_action(
 ) -> tuple[str, str]:
     """Devuelve (accion, motivo). `accion` es "heat" | "cool" | "idle".
 
+    `heat_target`/`cool_target`: las DOS consignas del preset activo
+    (ver presets.py) — una zona de calor y frio ("Auto", el unico modo
+    dual que expone climate.py, para que sea compatible con el System
+    Mode estandar de Matter) tiene las dos a la vez, calienta si baja de
+    `heat_target` y enfria si sube de `cool_target`; una zona de un solo
+    sentido solo trae rellena la que le corresponde (la otra es None).
+
     `outdoor_forecast`: previsión horaria empezando por la hora actual
     (indice 0), o lista vacia si no hay ninguna fuente declarada — ver
     outdoor.py. Sin previsión disponible, el motor sigue funcionando
     (reactivo puro, sin anticipacion ni ensanche de margen), nunca falla.
     """
-    heating = hvac_capability in ("heat", "heat_cool")
-    cooling = hvac_capability in ("cool", "heat_cool")
+    heating = heat_target is not None
+    cooling = cool_target is not None
 
     if heating and current_temp < min_temp:
         return "heat", f"por debajo del mínimo de seguridad de la zona ({min_temp:.1f}°C)"
@@ -85,26 +92,38 @@ def decide_action(
     if priority == "manual":
         return "idle", "modo manual: sin gestión automática"
 
-    effective_deadband = deadband
-    margin_note = ""
+    heat_deadband = cool_deadband = deadband
+    heat_note = cool_note = ""
     if priority == "ahorro":
-        rate = heating_rate_deg_h if heating else cooling_rate_deg_h
-        extra, why = _ahorro_extra_margin(heating, outdoor_now, outdoor_forecast, rate)
-        effective_deadband = deadband + extra
-        margin_note = f" ({why})"
+        if heating:
+            extra, why = _ahorro_extra_margin(True, outdoor_now, outdoor_forecast, heating_rate_deg_h)
+            heat_deadband = deadband + extra
+            heat_note = f" ({why})"
+        if cooling:
+            extra, why = _ahorro_extra_margin(False, outdoor_now, outdoor_forecast, cooling_rate_deg_h)
+            cool_deadband = deadband + extra
+            cool_note = f" ({why})"
 
-    if heating and current_temp < target_temp - effective_deadband:
-        return "heat", f"calentando hacia {target_temp:.1f}°C{margin_note}"
-    if cooling and current_temp > target_temp + effective_deadband:
-        return "cool", f"enfriando hacia {target_temp:.1f}°C{margin_note}"
+    if heating and current_temp < heat_target - heat_deadband:
+        return "heat", f"calentando hacia {heat_target:.1f}°C{heat_note}"
+    if cooling and current_temp > cool_target + cool_deadband:
+        return "cool", f"enfriando hacia {cool_target:.1f}°C{cool_note}"
 
-    if heating or cooling:
-        rate = heating_rate_deg_h if heating else cooling_rate_deg_h
-        action, reason = _anticipate(heating, current_temp, target_temp, deadband, outdoor_forecast, idle_loss_coeff, rate)
+    if heating:
+        action, reason = _anticipate(True, current_temp, heat_target, deadband, outdoor_forecast, idle_loss_coeff, heating_rate_deg_h)
+        if action != "idle":
+            return action, reason
+    if cooling:
+        action, reason = _anticipate(False, current_temp, cool_target, deadband, outdoor_forecast, idle_loss_coeff, cooling_rate_deg_h)
         if action != "idle":
             return action, reason
 
-    return "idle", f"dentro de rango de {target_temp:.1f}°C (±{effective_deadband:.1f}°C){margin_note}"
+    parts = []
+    if heating:
+        parts.append(f"calor {heat_target:.1f}°C (±{heat_deadband:.1f}){heat_note}")
+    if cooling:
+        parts.append(f"frío {cool_target:.1f}°C (±{cool_deadband:.1f}){cool_note}")
+    return "idle", f"dentro de rango: {', '.join(parts) if parts else 'sin consigna activa'}"
 
 
 def _ahorro_extra_margin(heating: bool, outdoor_now: float | None, outdoor_forecast: list[float],

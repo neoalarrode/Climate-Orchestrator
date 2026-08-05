@@ -74,7 +74,15 @@ PRESETS_TEXT_DESCRIPTION = (
 
 
 def _entity(domain, device_class=None, multiple=False):
-    return selector.EntitySelector(selector.EntitySelectorConfig(domain=domain, device_class=device_class, multiple=multiple))
+    # OJO: NO pasar "device_class=None" explicito al selector cuando no
+    # aplica — un EntitySelectorConfig con esa clave puesta a None (en vez
+    # de omitida del todo) deja el picker de entidades roto en el
+    # frontend: aparece vacio y no filtra nada al escribir, sin ningun
+    # error visible (asi se detecto: "el desplegable no muestra nada").
+    config: dict = {"domain": domain, "multiple": multiple}
+    if device_class is not None:
+        config["device_class"] = device_class
+    return selector.EntitySelector(selector.EntitySelectorConfig(**config))
 
 
 def _temp_number():

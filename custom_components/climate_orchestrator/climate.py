@@ -2,20 +2,24 @@
 La entidad climate.* de una zona.
 
 Dos velocidades, a proposito (mismo espiritu que Battery Orchestrator, ver
-const.py): el PLAN (horario -> nivel objetivo, previsión exterior,
-inercia termica aprendida del historico) es la parte cara y se recalcula
-cada `plan_refresh_minutes`. La DECISION de cada instante (temperatura
+const.py): la PREVISIÓN (previsión exterior, inercia térmica aprendida
+del historico) es la parte cara y se recalcula cada
+`forecast_refresh_minutes`. La DECISION de cada instante (temperatura
 real, presencia real, puerta/ventana, y la ejecucion sobre el actuador) es
 la parte barata y reacciona AL INSTANTE a los cambios de esos sensores via
 `async_track_state_change_event` — el bus de eventos de HA, no un sondeo
 periodico ni un websocket aparte. Esto es lo que un custom_component tiene
 gratis y un addon externo no.
 
-El MODO (apagado/calor/frio/auto) es la eleccion PERSISTENTE del usuario
-—se restaura solo tras un reinicio via RestoreEntity, igual que cualquier
-otro termostato de HA—. La TEMPERATURA objetivo, en cambio, es una
-anulacion TEMPORAL con caducidad (`manual_override_hours`): pasado ese
-tiempo, la zona vuelve sola al calculo automatico.
+Nada de horario: el objetivo de la zona en cada momento lo decide un
+PRESET (ver presets.py) — activado automaticamente segun la presencia
+FISICA real de la habitacion (sensores PIR/mmWave, no "en casa"), o
+fijado a mano. El MODO hvac (apagado/calor/frio/auto) y el PRESET activo
+son elecciones PERSISTENTES del usuario — se restauran solas tras un
+reinicio via RestoreEntity, igual que cualquier otro termostato de HA. La
+TEMPERATURA objetivo, en cambio, es una anulacion TEMPORAL con caducidad
+(`manual_override_hours`): pasado ese tiempo, la zona vuelve sola al
+preset activo.
 """
 
 from __future__ import annotations
@@ -33,18 +37,16 @@ from homeassistant.helpers.event import async_track_point_in_time, async_track_s
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
-from . import outdoor, scheduler, thermal_model
+from . import outdoor, presets as presets_module, scheduler, thermal_model
 from .const import (
-    CONF_AWAY_TEMP,
-    CONF_COMFORT_TEMP,
-    CONF_CONTROL_MODE,
+    CONF_AWAY_PRESET,
     CONF_COOL_ACTUATOR_MODE,
     CONF_COOL_CLIMATE,
     CONF_COOL_SWITCH,
     CONF_CURRENT_TEMP_SENSOR,
     CONF_DEADBAND,
     CONF_DOOR_WINDOW_ENTITIES,
-    CONF_ECO_TEMP,
+    CONF_FORECAST_REFRESH_MINUTES,
     CONF_HEAT_ACTUATOR_MODE,
     CONF_HEAT_CLIMATE,
     CONF_HEAT_SWITCH,
@@ -56,27 +58,21 @@ from .const import (
     CONF_MIN_ON_SECONDS,
     CONF_MIN_TEMP,
     CONF_OUTDOOR_TEMP_SENSOR,
-    CONF_PLAN_REFRESH_MINUTES,
     CONF_PRESENCE_ENTITIES,
-    CONF_PRESENCE_OVERRIDES_SCHEDULE,
+    CONF_PRESENCE_PRESET,
+    CONF_PRESETS_TEXT,
     CONF_PRIORITY,
-    CONF_SCHEDULE_DAYS,
-    CONF_SCHEDULE_END,
-    CONF_SCHEDULE_START,
     CONF_SIMULATE,
     CONF_WEATHER_ENTITY,
-    DEFAULT_AWAY_TEMP,
-    DEFAULT_COMFORT_TEMP,
     DEFAULT_DEADBAND,
-    DEFAULT_ECO_TEMP,
+    DEFAULT_FORECAST_REFRESH_MINUTES,
     DEFAULT_HISTORY_DAYS_FOR_INERTIA,
-    DEFAULT_HORIZON_HOURS,
     DEFAULT_MANUAL_OVERRIDE_HOURS,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_OFF_SECONDS,
     DEFAULT_MIN_ON_SECONDS,
     DEFAULT_MIN_TEMP,
-    DEFAULT_PLAN_REFRESH_MINUTES,
+    DEFAULT_OUTDOOR_HORIZON_HOURS,
     DOMAIN,
 )
 
@@ -95,7 +91,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     _attr_should_poll = False
     _attr_target_temperature_step = 0.5
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
+    _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
@@ -118,19 +114,26 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         else:
             self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
 
+        try:
+            self._presets = presets_module.parse_presets(self.zone.get(CONF_PRESETS_TEXT, ""))
+        except ValueError:
+            self._presets = []
+        self._attr_preset_modes = [presets_module.PRESET_AUTO] + [p["name"] for p in self._presets]
+        self._attr_preset_mode = presets_module.PRESET_AUTO
+
         self._attr_min_temp = float(self.zone.get(CONF_MIN_TEMP, DEFAULT_MIN_TEMP))
         self._attr_max_temp = float(self.zone.get(CONF_MAX_TEMP, DEFAULT_MAX_TEMP))
         self._attr_hvac_mode = HVACMode.OFF
         self._attr_hvac_action = HVACAction.IDLE
         self._attr_current_temperature = None
-        self._attr_target_temperature = float(self.zone.get(CONF_COMFORT_TEMP, DEFAULT_COMFORT_TEMP))
+        self._attr_target_temperature = self._presets[0]["target_temp"] if self._presets else 21.0
         self._attr_available = True
 
-        self._plan = None
-        self._plan_computed_at = None
+        self._outdoor_forecast: list[float] = []
+        self._outdoor_now: float | None = None
         self._thermal_model: dict = {}
         self._reason = "sin calcular todavia"
-        self._level: str | None = None
+        self._active_preset_name: str | None = None
 
         self._temp_override_value: float | None = None
         self._temp_override_until = None
@@ -144,13 +147,13 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     def extra_state_attributes(self) -> dict:
         return {
             "reason": self._reason,
-            "level": self._level,
+            "active_preset": self._active_preset_name,
             "priority": self.zone.get(CONF_PRIORITY),
-            "control_mode": self.zone.get(CONF_CONTROL_MODE),
             "simulate": self.zone.get(CONF_SIMULATE, True),
             "thermal_model_reliable": self._thermal_model.get("reliable", False),
             "heating_rate_deg_h": round(self._thermal_model.get("heating_rate_deg_h", 0) or 0, 2),
             "cooling_rate_deg_h": round(self._thermal_model.get("cooling_rate_deg_h", 0) or 0, 2),
+            "outdoor_now": self._outdoor_now,
             "manual_override_until": self._temp_override_until.isoformat() if self._temp_override_until else None,
         }
 
@@ -168,11 +171,16 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             self._attr_hvac_mode = {
                 "heat": HVACMode.HEAT, "cool": HVACMode.COOL, "heat_cool": HVACMode.HEAT_COOL,
             }.get(capability, HVACMode.HEAT)
-        if last_state is not None and last_state.attributes.get(ATTR_TEMPERATURE) is not None:
-            try:
-                self._attr_target_temperature = float(last_state.attributes[ATTR_TEMPERATURE])
-            except (TypeError, ValueError):
-                pass
+
+        if last_state is not None:
+            last_preset = last_state.attributes.get("preset_mode")
+            if last_preset in (self._attr_preset_modes or []):
+                self._attr_preset_mode = last_preset
+            if last_state.attributes.get(ATTR_TEMPERATURE) is not None:
+                try:
+                    self._attr_target_temperature = float(last_state.attributes[ATTR_TEMPERATURE])
+                except (TypeError, ValueError):
+                    pass
 
         watched = [e for e in [
             self.zone.get(CONF_CURRENT_TEMP_SENSOR),
@@ -183,20 +191,20 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         if watched:
             self.async_on_remove(async_track_state_change_event(self.hass, watched, self._handle_reactive_event))
 
-        refresh_minutes = self.zone.get(CONF_PLAN_REFRESH_MINUTES, DEFAULT_PLAN_REFRESH_MINUTES)
+        refresh_minutes = self.zone.get(CONF_FORECAST_REFRESH_MINUTES, DEFAULT_FORECAST_REFRESH_MINUTES)
         self.async_on_remove(
-            async_track_time_interval(self.hass, self._handle_plan_refresh, timedelta(minutes=refresh_minutes))
+            async_track_time_interval(self.hass, self._handle_forecast_refresh, timedelta(minutes=refresh_minutes))
         )
 
-        await self._async_refresh_plan()
+        await self._async_refresh_forecast()
 
     # -------------------------------------------------------- reactivo ----
 
     async def _handle_reactive_event(self, event) -> None:
         await self._async_decide_and_act()
 
-    async def _handle_plan_refresh(self, now) -> None:
-        await self._async_refresh_plan()
+    async def _handle_forecast_refresh(self, now) -> None:
+        await self._async_refresh_forecast()
 
     async def _handle_override_expiry(self, now) -> None:
         self._temp_override_value = None
@@ -219,6 +227,11 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             return None
 
     def _presence_now(self) -> bool | None:
+        """Presencia FISICA de la zona AHORA MISMO — pensado sobre todo
+        para sensores propios de la habitacion (PIR, mmWave, radar de
+        presencia: binary_sensor de ocupacion/movimiento), no solo "en
+        casa". person./device_tracker. tambien cuentan si se declaran,
+        como señal adicional. Nunca se predice: solo el dato medido ahora."""
         entities = self.zone.get(CONF_PRESENCE_ENTITIES) or []
         if not entities:
             return None
@@ -237,14 +250,6 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 return True
         return False
 
-    def _schedule_windows(self) -> list[dict]:
-        start, end = self.zone.get(CONF_SCHEDULE_START), self.zone.get(CONF_SCHEDULE_END)
-        if not start or not end:
-            return []
-        days = [int(d) for d in (self.zone.get(CONF_SCHEDULE_DAYS) or [])]
-        # TimeSelector guarda "HH:MM:SS"; el motor (scheduler.py) espera "HH:MM"
-        return [{"days": days, "start": str(start)[:5], "end": str(end)[:5]}]
-
     def _effective_capability(self) -> str:
         """La capacidad que rige AHORA MISMO: si el usuario bloqueo el modo
         a "solo calor" o "solo frio" desde el termostato (HA/HomeKit/
@@ -256,39 +261,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             return "cool"
         return self.zone.get(CONF_HVAC_CAPABILITY, "heat")
 
-    # ------------------------------------------------------- plan caro ----
+    # ---------------------------------------------------- previsión cara ----
 
-    async def _async_refresh_plan(self) -> None:
-        horizon = DEFAULT_HORIZON_HOURS
+    async def _async_refresh_forecast(self) -> None:
         weather_entity = self.zone.get(CONF_WEATHER_ENTITY, "")
-
-        outdoor_forecast = await outdoor.async_get_outdoor_forecast(self.hass, self.zone, weather_entity, horizon)
+        self._outdoor_forecast = await outdoor.async_get_outdoor_forecast(
+            self.hass, self.zone, weather_entity, DEFAULT_OUTDOOR_HORIZON_HOURS
+        )
+        self._outdoor_now = self._outdoor_forecast[0] if self._outdoor_forecast else None
         self._thermal_model = await thermal_model.async_get_model(
             self.hass, self.zone, int(self.zone.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA))
         )
-
-        now = dt_util.now()
-        levels = scheduler.build_target_levels(
-            now, horizon, self._schedule_windows(), self._presence_now(),
-            self.zone.get(CONF_PRESENCE_OVERRIDES_SCHEDULE, True),
-            self.zone.get(CONF_PRIORITY, "confort"), self.zone.get(CONF_CONTROL_MODE, "hibrido"),
-        )
-        current_temp = self._read_current_temp()
-        self._plan = scheduler.build_plan(
-            now=now, levels=levels, outdoor_forecast=outdoor_forecast,
-            current_temp=current_temp if current_temp is not None else float(self.zone.get(CONF_COMFORT_TEMP, DEFAULT_COMFORT_TEMP)),
-            comfort_temp=float(self.zone.get(CONF_COMFORT_TEMP, DEFAULT_COMFORT_TEMP)),
-            eco_temp=float(self.zone.get(CONF_ECO_TEMP, DEFAULT_ECO_TEMP)),
-            away_temp=float(self.zone.get(CONF_AWAY_TEMP, DEFAULT_AWAY_TEMP)),
-            hvac_capability=self._effective_capability(),
-            priority=self.zone.get(CONF_PRIORITY, "confort"),
-            deadband=float(self.zone.get(CONF_DEADBAND, DEFAULT_DEADBAND)),
-            heating_rate_deg_h=self._thermal_model["heating_rate_deg_h"],
-            cooling_rate_deg_h=self._thermal_model["cooling_rate_deg_h"],
-            idle_loss_coeff=self._thermal_model["idle_loss_coeff"],
-            thermal_model_reliable=self._thermal_model["reliable"],
-        )
-        self._plan_computed_at = now
         await self._async_decide_and_act()
 
     # ---------------------------------------------------- decision barata --
@@ -303,42 +286,51 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._attr_available = True
 
         deadband = float(self.zone.get(CONF_DEADBAND, DEFAULT_DEADBAND))
+        min_temp = float(self.zone.get(CONF_MIN_TEMP, DEFAULT_MIN_TEMP))
+        max_temp = float(self.zone.get(CONF_MAX_TEMP, DEFAULT_MAX_TEMP))
         capability = self._effective_capability()
 
+        preset_name, preset_target, preset_reason = presets_module.resolve_active_preset(
+            self._attr_preset_mode, self._presets,
+            self.zone.get(CONF_PRESENCE_PRESET, ""), self.zone.get(CONF_AWAY_PRESET, ""),
+            self._presence_now(),
+        )
+        self._active_preset_name = preset_name
+        base_target = preset_target if preset_target is not None else self._attr_target_temperature
+
+        now = dt_util.now()
+        override_active = (
+            self._temp_override_value is not None and self._temp_override_until is not None and now < self._temp_override_until
+        )
+
         if self._attr_hvac_mode == HVACMode.OFF:
-            action, target_temp = "idle", self._attr_target_temperature
+            action, target_temp = "idle", base_target
             self._reason = "apagado desde el termostato"
         elif self._door_window_open():
-            action, target_temp = "idle", self._attr_target_temperature
+            action, target_temp = "idle", base_target
             self._reason = "puerta/ventana abierta: en pausa"
-        elif not self._plan:
-            action, target_temp = "idle", self._attr_target_temperature
-            self._reason = "esperando el primer calculo del plan"
-        else:
-            now = dt_util.now()
-            hour_offset = 0
-            if self._plan_computed_at is not None:
-                hour_offset = int((now - self._plan_computed_at).total_seconds() // 3600)
-            hour_offset = max(0, min(len(self._plan) - 1, hour_offset))
-            now_hp = self._plan[hour_offset]
-            self._level = now_hp.level
-
-            override_active = (
-                self._temp_override_value is not None and self._temp_override_until is not None and now < self._temp_override_until
-            )
-            if override_active:
-                target_temp = self._temp_override_value
-                if capability in ("heat", "heat_cool") and current_temp < target_temp - deadband:
-                    action = "heat"
-                elif capability in ("cool", "heat_cool") and current_temp > target_temp + deadband:
-                    action = "cool"
-                else:
-                    action = "idle"
-                self._reason = f"objetivo anulado a mano hasta las {self._temp_override_until.strftime('%H:%M')} ({target_temp:.1f}°C)"
+        elif override_active:
+            target_temp = self._temp_override_value
+            if capability in ("heat", "heat_cool") and current_temp < target_temp - deadband:
+                action = "heat"
+            elif capability in ("cool", "heat_cool") and current_temp > target_temp + deadband:
+                action = "cool"
             else:
-                action, target_temp = now_hp.action, now_hp.target_temp
-                self._reason = now_hp.reason
-                self._attr_target_temperature = target_temp
+                action = "idle"
+            self._reason = f"objetivo anulado a mano hasta las {self._temp_override_until.strftime('%H:%M')} ({target_temp:.1f}°C)"
+        else:
+            target_temp = base_target
+            self._attr_target_temperature = target_temp
+            action, decide_reason = scheduler.decide_action(
+                current_temp=current_temp, target_temp=target_temp, hvac_capability=capability,
+                priority=self.zone.get(CONF_PRIORITY, "confort"), deadband=deadband,
+                min_temp=min_temp, max_temp=max_temp,
+                outdoor_now=self._outdoor_now, outdoor_forecast=self._outdoor_forecast,
+                heating_rate_deg_h=self._thermal_model.get("heating_rate_deg_h", 0.0),
+                cooling_rate_deg_h=self._thermal_model.get("cooling_rate_deg_h", 0.0),
+                idle_loss_coeff=self._thermal_model.get("idle_loss_coeff", 0.0),
+            )
+            self._reason = f"{preset_reason} — {decide_reason}"
 
         real_action = await self._async_execute(action, target_temp, capability)
         self._attr_hvac_action = _ACTION_MAP.get(real_action, HVACAction.IDLE)
@@ -456,8 +448,16 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         self._attr_hvac_mode = hvac_mode
         # Un cambio de modo puede cambiar la capacidad EFECTIVA (p.ej. de
-        # "auto" a "solo frio", ver _effective_capability) y el plan
-        # cacheado se calculo con la capacidad anterior — recalcularlo
-        # entero ahora mismo, no solo la decision rapida, para no dejar la
-        # zona parada hasta el proximo refresco periodico.
-        await self._async_refresh_plan()
+        # "auto" a "solo frio", ver _effective_capability) — recalcular ya
+        # mismo la decision, no esperar al proximo evento reactivo.
+        await self._async_decide_and_act()
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Fijar CUALQUIER preset a mano (o "Automático") es una eleccion
+        PERSISTENTE — no caduca sola, se restaura tras un reinicio, igual
+        que el modo hvac. Solo la temperatura objetivo (async_set_temperature)
+        es una anulacion temporal."""
+        if preset_mode not in (self._attr_preset_modes or []):
+            return
+        self._attr_preset_mode = preset_mode
+        await self._async_decide_and_act()

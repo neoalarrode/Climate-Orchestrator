@@ -1,8 +1,8 @@
 <h1 align="center">🌡️ Climate Orchestrator</h1>
 
 <p align="center">
-  Calefacción y aire acondicionado adaptativos — por presencia, horario,<br>
-  puertas/ventanas e inercia térmica real de cada zona. Sin cajas negras.
+  Calefacción y aire acondicionado adaptativos — por presencia física,<br>
+  presets, puertas/ventanas e inercia térmica real de cada zona. Sin cajas negras.
 </p>
 
 <p align="center">
@@ -46,15 +46,25 @@ hasta 20 segundos". Es la arquitectura correcta para un termostato.
   vía el bus de eventos de HA (`async_track_state_change_event`), no por
   sondeo. Una puerta/ventana abierta pausa la zona en el momento, sin
   esperar a nada.
-- **Tres modos de control por zona**: solo horario, solo presencia real
-  (nunca prevista — sería una caja negra), o híbrido (horario + la
-  presencia real puede subir/bajar el nivel de la hora actual).
+- **Presets con nombre en vez de horario fijo**: "Confort: 21, Ausente:
+  17, Fiesta: 23"... tantos como quieras. Se activan solos según la
+  presencia FÍSICA real de la habitación (sensores PIR/mmWave, no solo
+  "en casa" por el móvil) — o a mano, como una elección persistente
+  (igual que el modo calor/frío) hasta que vuelvas a "Automático".
+- **Techo y suelo de seguridad siempre activos**: "nunca por debajo de
+  X°C en invierno, nunca por encima de X°C en verano", aunque no haya
+  nadie — independientes del preset activo o de la presencia.
 - **Aprende la inercia térmica real** de cada zona con su propio
   historial (recorder de HA): grados/hora calentando, coeficiente de
   pérdida frente al exterior — nunca un número inventado.
-- **Precalienta lo justo**: en prioridad "ahorro", no enciende hasta el
-  último momento en el que, a la velocidad real de esa zona, todavía
-  llega a tiempo. En "confort", actúa en cuanto hace falta.
+- **Se anticipa al clima exterior, no a tu presencia**: si la previsión
+  meteorológica indica que se acerca un cambio de temperatura, empieza a
+  actuar de forma sostenida con antelación (usando la inercia térmica
+  aprendida) en vez de esperar a salirse de rango y tener que compensarlo
+  de golpe a máxima potencia. En prioridad "ahorro", además, ensancha el
+  margen de histéresis cuando la previsión es estable, para reducir
+  ciclos de encendido. Nunca se predice presencia — solo clima, que es un
+  dato observable.
 - **Calor y frío con actuadores independientes**: cada lado (calor y
   frío) se declara por separado, y CADA UNO puede ser un switch propio o
   un `climate.*` ya existente — cualquier combinación: un radiador con
@@ -64,13 +74,12 @@ hasta 20 segundos". Es la arquitectura correcta para un termostato.
   mismo equipo hace ambas cosas (una bomba de calor reversible: se
   declara el mismo `climate.*` en los dos campos), se detecta solo y se
   le manda una única orden con el modo correcto según la estación.
-- **Modo persistente vs. anulación temporal**: cambiar el modo
-  (apagado/calor/frío/auto) desde el termostato es una elección que se
-  queda (se restaura tras un reinicio, igual que cualquier termostato
-  real); cambiar la temperatura objetivo es una anulación temporal con
-  caducidad configurable, tras la cual la zona vuelve sola al plan.
-- **Protección de seguridad** anti-heladas / anti-golpe-de-calor, siempre
-  activa, pase lo que pase con horario, presencia o modo manual.
+- **Modo y preset persistentes vs. temperatura como anulación temporal**:
+  cambiar el modo (apagado/calor/frío/auto) o el preset desde el
+  termostato es una elección que se queda (se restaura tras un reinicio,
+  igual que cualquier termostato real); cambiar la temperatura objetivo es
+  una anulación temporal con caducidad configurable, tras la cual la zona
+  vuelve sola al preset activo.
 - **Modo simulación** por zona: calcula y muestra lo que haría, sin tocar
   ningún actuador real, hasta que confíes en sus decisiones.
 

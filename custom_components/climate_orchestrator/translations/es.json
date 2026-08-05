@@ -7,8 +7,7 @@
         "data": {
           "name": "Nombre de la zona",
           "hvac_capability": "Capacidad",
-          "priority": "Prioridad",
-          "control_mode": "Modo de control"
+          "priority": "Prioridad"
         }
       },
       "sensors": {
@@ -22,6 +21,7 @@
       },
       "actuator": {
         "title": "Actuador",
+        "description": "Calor y frío tienen CADA UNO su propio actuador, independiente — cualquiera puede ser un switch o un climate.* ya existente, en cualquier combinación.",
         "data": {
           "heat_actuator_mode": "Tipo de actuador de calefacción",
           "heat_switch": "Switch de calefacción",
@@ -31,34 +31,47 @@
           "cool_climate_entity": "climate.* existente para refrigeración (misma entidad que calefacción = bomba de calor reversible)"
         }
       },
-      "temps": {
-        "title": "Temperaturas",
+      "presets": {
+        "title": "Presets",
+        "description": "Presets con nombre en vez de un horario fijo — Climate Orchestrator cambia entre ellos según la presencia real. Formato: \"Nombre: temperatura\" separados por comas. Ejemplo: \"Confort: 21, Ausente: 17, Fiesta: 23\".",
         "data": {
-          "comfort_temp": "Temperatura de confort",
-          "eco_temp": "Temperatura eco",
-          "away_temp": "Temperatura de ausencia",
+          "presets_text": "Presets"
+        }
+      },
+      "preset_roles": {
+        "title": "Cambio automático",
+        "description": "Qué preset se aplica en modo \"Automático\" según la presencia real.",
+        "data": {
+          "presence_preset": "Preset con presencia",
+          "away_preset": "Preset sin presencia"
+        }
+      },
+      "limits": {
+        "title": "Límites de seguridad",
+        "description": "Se respetan SIEMPRE, sea cual sea el preset activo, la presencia o el modo manual — p.ej. nunca por debajo de X en invierno, nunca por encima de X en verano, aunque no haya nadie en casa.",
+        "data": {
           "deadband": "Histéresis",
-          "min_temp": "Mínimo permitido",
-          "max_temp": "Máximo permitido",
+          "min_temp": "Mínimo (suelo siempre aplicado)",
+          "max_temp": "Máximo (techo siempre aplicado)",
           "min_on_seconds": "Tiempo mínimo encendido (s)",
           "min_off_seconds": "Tiempo mínimo apagado (s)"
         }
       },
-      "schedule": {
-        "title": "Horario, presencia y opciones",
+      "options": {
+        "title": "Presencia, puertas/ventanas y opciones",
+        "description": "presence_entities está pensado para sensores de presencia FÍSICA propios de la habitación (PIR, mmWave, binary_sensor de ocupación) — no solo \"en casa\". person./device_tracker. también se aceptan, como señal adicional.",
         "data": {
-          "schedule_start": "Inicio de la franja de confort",
-          "schedule_end": "Fin de la franja de confort",
-          "schedule_days": "Días (vacío = todos)",
           "presence_entities": "Entidades de presencia",
-          "presence_overrides_schedule": "La presencia puede anular el horario",
           "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
           "manual_override_hours": "Duración de la anulación manual de temperatura",
           "history_days_for_inertia": "Días de histórico para la inercia térmica",
-          "plan_refresh_minutes": "Frecuencia de recálculo del plan",
+          "forecast_refresh_minutes": "Frecuencia de recálculo de la previsión",
           "simulate": "Modo simulación (nunca toca actuadores reales)"
         }
       }
+    },
+    "error": {
+      "invalid_presets": "Los presets no tienen el formato esperado «Nombre: temperatura»"
     }
   },
   "options": {
@@ -69,7 +82,6 @@
           "name": "Nombre de la zona",
           "hvac_capability": "Capacidad",
           "priority": "Prioridad",
-          "control_mode": "Modo de control",
           "current_temp_sensor": "Sensor de temperatura",
           "humidity_sensor": "Sensor de humedad (opcional)",
           "outdoor_temp_sensor": "Sensor exterior propio de esta zona (opcional)",
@@ -80,26 +92,25 @@
           "cool_actuator_mode": "Tipo de actuador de refrigeración",
           "cool_switch": "Switch de refrigeración",
           "cool_climate_entity": "climate.* existente para refrigeración (misma entidad que calefacción = bomba de calor reversible)",
-          "comfort_temp": "Temperatura de confort",
-          "eco_temp": "Temperatura eco",
-          "away_temp": "Temperatura de ausencia",
+          "presets_text": "Presets («Nombre: temperatura», separados por comas)",
+          "presence_preset": "Nombre del preset con presencia",
+          "away_preset": "Nombre del preset sin presencia",
           "deadband": "Histéresis",
-          "min_temp": "Mínimo permitido",
-          "max_temp": "Máximo permitido",
+          "min_temp": "Mínimo (suelo siempre aplicado)",
+          "max_temp": "Máximo (techo siempre aplicado)",
           "min_on_seconds": "Tiempo mínimo encendido (s)",
           "min_off_seconds": "Tiempo mínimo apagado (s)",
-          "schedule_start": "Inicio de la franja de confort",
-          "schedule_end": "Fin de la franja de confort",
-          "schedule_days": "Días (vacío = todos)",
           "presence_entities": "Entidades de presencia",
-          "presence_overrides_schedule": "La presencia puede anular el horario",
           "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
           "manual_override_hours": "Duración de la anulación manual de temperatura",
           "history_days_for_inertia": "Días de histórico para la inercia térmica",
-          "plan_refresh_minutes": "Frecuencia de recálculo del plan",
+          "forecast_refresh_minutes": "Frecuencia de recálculo de la previsión",
           "simulate": "Modo simulación (nunca toca actuadores reales)"
         }
       }
+    },
+    "error": {
+      "invalid_presets": "Los presets no tienen el formato esperado «Nombre: temperatura»"
     }
   }
 }

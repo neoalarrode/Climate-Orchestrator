@@ -1,8 +1,8 @@
 <h1 align="center">🌡️ Climate Orchestrator</h1>
 
 <p align="center">
-  Adaptive heating and air conditioning — driven by presence, schedule,<br>
-  doors/windows and each zone's real thermal inertia. No black boxes.
+  Adaptive heating and air conditioning — driven by physical presence,<br>
+  presets, doors/windows and each zone's real thermal inertia. No black boxes.
 </p>
 
 <p align="center">
@@ -45,15 +45,24 @@ architecture for a thermostat.
 - **Reacts instantly** to temperature, presence, and doors/windows — via
   HA's event bus (`async_track_state_change_event`), not polling. An open
   door/window pauses the zone the moment it happens.
-- **Three control modes per zone**: schedule only, real presence only
-  (never predicted — that would be a black box), or hybrid (schedule +
-  real presence can bump the current hour's level up or down).
+- **Named presets instead of a fixed schedule**: "Comfort: 21, Away: 17,
+  Party: 23"... as many as you want. They switch automatically based on
+  the room's real PHYSICAL presence (PIR/mmWave sensors, not just "home"
+  on a phone) — or by hand, as a standing choice (like the heat/cool
+  mode) until you set it back to "Auto".
+- **Always-enforced safety ceiling and floor**: "never below X°C in
+  winter, never above X°C in summer", even with nobody home — independent
+  of the active preset or presence.
 - **Learns each zone's real thermal inertia** from its own history (HA's
   recorder): °C/hour while heating, loss coefficient vs. outdoor delta —
   never a made-up number.
-- **Preheats just enough**: in "savings" priority, it won't turn on until
-  the latest moment at which, at that zone's real measured rate, it still
-  arrives on time. In "comfort" priority, it acts as soon as needed.
+- **Anticipates the weather, not your presence**: if the forecast shows a
+  temperature swing coming, it starts acting gradually ahead of time
+  (using the learned thermal inertia) instead of waiting to drift out of
+  range and having to compensate all at once at full power. In "savings"
+  priority it also widens the hysteresis margin when the forecast is
+  stable, to cut down on-cycles. Presence is never predicted — only
+  weather, which is observable data.
 - **Independent heating and cooling actuators**: each side (heating and
   cooling) is declared separately, and EITHER can be a plain switch or an
   existing `climate.*` — any combination: a radiator with a thermostatic
@@ -63,13 +72,12 @@ architecture for a thermostat.
   unit does both (a reversible heat pump: declare the same `climate.*` in
   both fields), it's auto-detected and sent a single command with the
   correct mode for the season.
-- **Standing mode vs. temporary override**: changing the mode
-  (off/heat/cool/auto) from the thermostat is a choice that sticks
-  (restored across restarts, like any real thermostat); changing the
-  target temperature is a temporary override with a configurable expiry,
-  after which the zone returns to the automatic plan on its own.
-- **Safety protection**: frost / heat-stroke protection, always active no
-  matter what schedule, presence, or manual mode say.
+- **Standing mode and preset vs. temporary temperature override**:
+  changing the mode (off/heat/cool/auto) or the preset from the
+  thermostat is a choice that sticks (restored across restarts, like any
+  real thermostat); changing the target temperature is a temporary
+  override with a configurable expiry, after which the zone returns to
+  the active preset on its own.
 - **Per-zone simulation mode**: computes and shows what it would do
   without touching any real actuator, until you trust its decisions.
 

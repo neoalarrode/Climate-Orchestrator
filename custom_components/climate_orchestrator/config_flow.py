@@ -13,17 +13,16 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
+from . import presets as presets_module
 from .const import (
-    CONF_AWAY_TEMP,
-    CONF_COMFORT_TEMP,
-    CONF_CONTROL_MODE,
+    CONF_AWAY_PRESET,
     CONF_COOL_ACTUATOR_MODE,
     CONF_COOL_CLIMATE,
     CONF_COOL_SWITCH,
     CONF_CURRENT_TEMP_SENSOR,
     CONF_DEADBAND,
     CONF_DOOR_WINDOW_ENTITIES,
-    CONF_ECO_TEMP,
+    CONF_FORECAST_REFRESH_MINUTES,
     CONF_HEAT_ACTUATOR_MODE,
     CONF_HEAT_CLIMATE,
     CONF_HEAT_SWITCH,
@@ -36,40 +35,22 @@ from .const import (
     CONF_MIN_ON_SECONDS,
     CONF_MIN_TEMP,
     CONF_OUTDOOR_TEMP_SENSOR,
-    CONF_PLAN_REFRESH_MINUTES,
     CONF_PRESENCE_ENTITIES,
-    CONF_PRESENCE_OVERRIDES_SCHEDULE,
+    CONF_PRESENCE_PRESET,
+    CONF_PRESETS_TEXT,
     CONF_PRIORITY,
-    CONF_SCHEDULE_DAYS,
-    CONF_SCHEDULE_END,
-    CONF_SCHEDULE_START,
     CONF_SIMULATE,
     CONF_WEATHER_ENTITY,
-    DEFAULT_AWAY_TEMP,
-    DEFAULT_COMFORT_TEMP,
     DEFAULT_DEADBAND,
-    DEFAULT_ECO_TEMP,
+    DEFAULT_FORECAST_REFRESH_MINUTES,
     DEFAULT_HISTORY_DAYS_FOR_INERTIA,
     DEFAULT_MANUAL_OVERRIDE_HOURS,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_OFF_SECONDS,
     DEFAULT_MIN_ON_SECONDS,
     DEFAULT_MIN_TEMP,
-    DEFAULT_PLAN_REFRESH_MINUTES,
-    DEFAULT_SCHEDULE_END,
-    DEFAULT_SCHEDULE_START,
     DOMAIN,
 )
-
-DAY_OPTIONS = [
-    selector.SelectOptionDict(value="0", label="Lunes"),
-    selector.SelectOptionDict(value="1", label="Martes"),
-    selector.SelectOptionDict(value="2", label="Miércoles"),
-    selector.SelectOptionDict(value="3", label="Jueves"),
-    selector.SelectOptionDict(value="4", label="Viernes"),
-    selector.SelectOptionDict(value="5", label="Sábado"),
-    selector.SelectOptionDict(value="6", label="Domingo"),
-]
 
 CAPABILITY_OPTIONS = [
     selector.SelectOptionDict(value="heat", label="Solo calor"),
@@ -82,14 +63,14 @@ ACTUATOR_MODE_OPTIONS = [
 ]
 PRIORITY_OPTIONS = [
     selector.SelectOptionDict(value="confort", label="Confort: actúa en cuanto hace falta"),
-    selector.SelectOptionDict(value="ahorro", label="Ahorro: arranca lo más tarde posible (usa la inercia térmica aprendida)"),
+    selector.SelectOptionDict(value="ahorro", label="Ahorro: margen más ancho, se estrecha si empeora la previsión exterior"),
     selector.SelectOptionDict(value="manual", label="Manual: nunca decide sola"),
 ]
-CONTROL_MODE_OPTIONS = [
-    selector.SelectOptionDict(value="horario", label="Solo horario"),
-    selector.SelectOptionDict(value="presencia", label="Solo presencia real"),
-    selector.SelectOptionDict(value="hibrido", label="Híbrido: horario + presencia puede anularlo"),
-]
+
+PRESETS_TEXT_DESCRIPTION = (
+    'Un preset por cada situación que quieras distinguir, separados por comas: '
+    '"Nombre: temperatura". Ejemplo: "Confort: 21, Ausente: 17, Fiesta: 23"'
+)
 
 
 def _entity(domain, device_class=None, multiple=False):
@@ -110,6 +91,12 @@ def _actuator_mode_selector():
     return selector.SelectSelector(selector.SelectSelectorConfig(options=ACTUATOR_MODE_OPTIONS, mode=selector.SelectSelectorMode.LIST))
 
 
+def _preset_names_selector(names: list[str]):
+    return selector.SelectSelector(selector.SelectSelectorConfig(
+        options=[selector.SelectOptionDict(value=n, label=n) for n in names], mode=selector.SelectSelectorMode.DROPDOWN,
+    ))
+
+
 class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Asistente de alta de una zona nueva, paso a paso."""
 
@@ -117,6 +104,7 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._data: dict = {}
+        self._preset_names: list[str] = []
 
     async def async_step_user(self, user_input=None):
         if user_input is not None:
@@ -129,8 +117,6 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 selector.SelectSelectorConfig(options=CAPABILITY_OPTIONS, mode=selector.SelectSelectorMode.DROPDOWN)),
             vol.Required(CONF_PRIORITY, default="confort"): selector.SelectSelector(
                 selector.SelectSelectorConfig(options=PRIORITY_OPTIONS, mode=selector.SelectSelectorMode.LIST)),
-            vol.Required(CONF_CONTROL_MODE, default="hibrido"): selector.SelectSelector(
-                selector.SelectSelectorConfig(options=CONTROL_MODE_OPTIONS, mode=selector.SelectSelectorMode.LIST)),
         })
         return self.async_show_form(step_id="user", data_schema=schema)
 
@@ -161,7 +147,7 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         nunca dos ordenes que se pisen."""
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_temps()
+            return await self.async_step_presets()
 
         capability = self._data.get(CONF_HVAC_CAPABILITY, "heat")
         fields: dict = {}
@@ -176,15 +162,51 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(step_id="actuator", data_schema=vol.Schema(fields))
 
-    async def async_step_temps(self, user_input=None):
+    async def async_step_presets(self, user_input=None):
+        """Presets con nombre en vez de horario — ver presets.py. Se valida
+        el texto aqui mismo (formato "Nombre: temperatura, ...") antes de
+        avanzar, para poder construir el desplegable del siguiente paso con
+        los nombres ya validados."""
+        errors: dict = {}
+        if user_input is not None:
+            try:
+                parsed = presets_module.parse_presets(user_input[CONF_PRESETS_TEXT])
+            except ValueError as e:
+                errors["base"] = "invalid_presets"
+                self._preset_error = str(e)
+            else:
+                self._data[CONF_PRESETS_TEXT] = user_input[CONF_PRESETS_TEXT]
+                self._preset_names = [p["name"] for p in parsed]
+                return await self.async_step_preset_roles()
+
+        schema = vol.Schema({vol.Required(CONF_PRESETS_TEXT, default=self._data.get(CONF_PRESETS_TEXT, "Confort: 21, Ausente: 17")): str})
+        description_placeholders = {"error": getattr(self, "_preset_error", ""), "format": PRESETS_TEXT_DESCRIPTION}
+        return self.async_show_form(step_id="presets", data_schema=schema, errors=errors, description_placeholders=description_placeholders)
+
+    async def async_step_preset_roles(self, user_input=None):
+        """Cuál de los presets declarados se activa en modo automático
+        según la presencia FÍSICA real de la zona (ver
+        CONF_PRESENCE_ENTITIES) — el que se usa cuando el preset activo es
+        "Automático", el valor por defecto."""
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_schedule()
+            return await self.async_step_limits()
+
+        names = self._preset_names or ["Confort", "Ausente"]
+        default_presence = names[0]
+        default_away = names[1] if len(names) > 1 else names[0]
+        schema = vol.Schema({
+            vol.Required(CONF_PRESENCE_PRESET, default=default_presence): _preset_names_selector(names),
+            vol.Required(CONF_AWAY_PRESET, default=default_away): _preset_names_selector(names),
+        })
+        return self.async_show_form(step_id="preset_roles", data_schema=schema)
+
+    async def async_step_limits(self, user_input=None):
+        if user_input is not None:
+            self._data.update(user_input)
+            return await self.async_step_options()
 
         schema = vol.Schema({
-            vol.Required(CONF_COMFORT_TEMP, default=DEFAULT_COMFORT_TEMP): _temp_number(),
-            vol.Required(CONF_ECO_TEMP, default=DEFAULT_ECO_TEMP): _temp_number(),
-            vol.Required(CONF_AWAY_TEMP, default=DEFAULT_AWAY_TEMP): _temp_number(),
             vol.Required(CONF_DEADBAND, default=DEFAULT_DEADBAND): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=0.1, max=3, step=0.1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="°C")),
             vol.Required(CONF_MIN_TEMP, default=DEFAULT_MIN_TEMP): _temp_number(),
@@ -192,34 +214,32 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_MIN_ON_SECONDS, default=DEFAULT_MIN_ON_SECONDS): _seconds_number(),
             vol.Optional(CONF_MIN_OFF_SECONDS, default=DEFAULT_MIN_OFF_SECONDS): _seconds_number(),
         })
-        return self.async_show_form(step_id="temps", data_schema=schema)
+        return self.async_show_form(step_id="limits", data_schema=schema, description_placeholders={
+            "limits_note": "Techo/suelo de seguridad: se respetan SIEMPRE, haya o no presencia, sea cual sea el preset activo."
+        })
 
-    async def async_step_schedule(self, user_input=None):
+    async def async_step_options(self, user_input=None):
         if user_input is not None:
             self._data.update(user_input)
             return self.async_create_entry(title=self._data["name"], data=self._data)
 
-        control_mode = self._data.get(CONF_CONTROL_MODE, "hibrido")
-        fields: dict = {}
-        if control_mode in ("horario", "hibrido"):
-            fields[vol.Required(CONF_SCHEDULE_START, default=DEFAULT_SCHEDULE_START)] = selector.TimeSelector()
-            fields[vol.Required(CONF_SCHEDULE_END, default=DEFAULT_SCHEDULE_END)] = selector.TimeSelector()
-            fields[vol.Optional(CONF_SCHEDULE_DAYS, default=[])] = selector.SelectSelector(
-                selector.SelectSelectorConfig(options=DAY_OPTIONS, multiple=True, mode=selector.SelectSelectorMode.LIST))
-        if control_mode in ("presencia", "hibrido"):
-            fields[vol.Optional(CONF_PRESENCE_ENTITIES, default=[])] = _entity(
-                ["person", "device_tracker", "binary_sensor"], multiple=True)
-            fields[vol.Optional(CONF_PRESENCE_OVERRIDES_SCHEDULE, default=True)] = selector.BooleanSelector()
-        fields[vol.Optional(CONF_DOOR_WINDOW_ENTITIES, default=[])] = _entity("binary_sensor", multiple=True)
-        fields[vol.Optional(CONF_MANUAL_OVERRIDE_HOURS, default=DEFAULT_MANUAL_OVERRIDE_HOURS)] = selector.NumberSelector(
-            selector.NumberSelectorConfig(min=0.5, max=12, step=0.5, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="h"))
-        fields[vol.Optional(CONF_HISTORY_DAYS_FOR_INERTIA, default=DEFAULT_HISTORY_DAYS_FOR_INERTIA)] = selector.NumberSelector(
-            selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días"))
-        fields[vol.Optional(CONF_PLAN_REFRESH_MINUTES, default=DEFAULT_PLAN_REFRESH_MINUTES)] = selector.NumberSelector(
-            selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min"))
-        fields[vol.Optional(CONF_SIMULATE, default=True)] = selector.BooleanSelector()
-
-        return self.async_show_form(step_id="schedule", data_schema=vol.Schema(fields))
+        schema = vol.Schema({
+            vol.Optional(CONF_PRESENCE_ENTITIES, default=[]): _entity(
+                ["binary_sensor", "person", "device_tracker"], multiple=True),
+            vol.Optional(CONF_DOOR_WINDOW_ENTITIES, default=[]): _entity("binary_sensor", multiple=True),
+            vol.Optional(CONF_MANUAL_OVERRIDE_HOURS, default=DEFAULT_MANUAL_OVERRIDE_HOURS): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0.5, max=12, step=0.5, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="h")),
+            vol.Optional(CONF_HISTORY_DAYS_FOR_INERTIA, default=DEFAULT_HISTORY_DAYS_FOR_INERTIA): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días")),
+            vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=DEFAULT_FORECAST_REFRESH_MINUTES): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
+            vol.Optional(CONF_SIMULATE, default=True): selector.BooleanSelector(),
+        })
+        return self.async_show_form(step_id="options", data_schema=schema, description_placeholders={
+            "presence_note": "Pensado para sensores de presencia FÍSICA de esta habitación (PIR, mmWave, radar de presencia...), "
+                              "no solo \"en casa\": binary_sensor de ocupación/movimiento es la señal principal. "
+                              "person./device_tracker. también se aceptan, como señal adicional."
+        })
 
     @staticmethod
     @callback
@@ -230,18 +250,29 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
     """Edicion de una zona ya creada: un unico formulario con todo,
     precargado con los valores actuales. Guardar aqui actualiza
-    directamente `entry.data` y recarga la entrada (ver __init__.py)."""
+    directamente `entry.data` y recarga la entrada (ver __init__.py).
+
+    Los presets se editan como el mismo texto libre del asistente inicial
+    (no un desplegable ya validado) — es una edicion, no un alta guiada, y
+    asi no hay problema de "el desplegable ya no coincide con lo que
+    acabas de escribir" a mitad de guardar."""
 
     def __init__(self, config_entry) -> None:
         self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         current = {**self.config_entry.data}
+        errors: dict = {}
 
         if user_input is not None:
-            merged = {**current, **user_input}
-            self.hass.config_entries.async_update_entry(self.config_entry, data=merged, title=merged.get("name", self.config_entry.title))
-            return self.async_create_entry(title="", data={})
+            try:
+                presets_module.parse_presets(user_input[CONF_PRESETS_TEXT])
+            except ValueError as e:
+                errors["base"] = "invalid_presets"
+            else:
+                merged = {**current, **user_input}
+                self.hass.config_entries.async_update_entry(self.config_entry, data=merged, title=merged.get("name", self.config_entry.title))
+                return self.async_create_entry(title="", data={})
 
         capability = current.get(CONF_HVAC_CAPABILITY, "heat")
 
@@ -251,8 +282,6 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
                 selector.SelectSelectorConfig(options=CAPABILITY_OPTIONS, mode=selector.SelectSelectorMode.DROPDOWN)),
             vol.Required(CONF_PRIORITY, default=current.get(CONF_PRIORITY, "confort")): selector.SelectSelector(
                 selector.SelectSelectorConfig(options=PRIORITY_OPTIONS, mode=selector.SelectSelectorMode.LIST)),
-            vol.Required(CONF_CONTROL_MODE, default=current.get(CONF_CONTROL_MODE, "hibrido")): selector.SelectSelector(
-                selector.SelectSelectorConfig(options=CONTROL_MODE_OPTIONS, mode=selector.SelectSelectorMode.LIST)),
             vol.Required(CONF_CURRENT_TEMP_SENSOR, default=current.get(CONF_CURRENT_TEMP_SENSOR, "")): _entity("sensor"),
             vol.Optional(CONF_HUMIDITY_SENSOR, default=current.get(CONF_HUMIDITY_SENSOR, "")): _entity("sensor"),
             vol.Optional(CONF_OUTDOOR_TEMP_SENSOR, default=current.get(CONF_OUTDOOR_TEMP_SENSOR, "")): _entity("sensor"),
@@ -268,29 +297,24 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
             fields[vol.Optional(CONF_COOL_CLIMATE, default=current.get(CONF_COOL_CLIMATE, ""))] = _entity("climate")
 
         fields.update({
-            vol.Required(CONF_COMFORT_TEMP, default=current.get(CONF_COMFORT_TEMP, DEFAULT_COMFORT_TEMP)): _temp_number(),
-            vol.Required(CONF_ECO_TEMP, default=current.get(CONF_ECO_TEMP, DEFAULT_ECO_TEMP)): _temp_number(),
-            vol.Required(CONF_AWAY_TEMP, default=current.get(CONF_AWAY_TEMP, DEFAULT_AWAY_TEMP)): _temp_number(),
+            vol.Required(CONF_PRESETS_TEXT, default=current.get(CONF_PRESETS_TEXT, "Confort: 21, Ausente: 17")): str,
+            vol.Required(CONF_PRESENCE_PRESET, default=current.get(CONF_PRESENCE_PRESET, "Confort")): str,
+            vol.Required(CONF_AWAY_PRESET, default=current.get(CONF_AWAY_PRESET, "Ausente")): str,
             vol.Required(CONF_DEADBAND, default=current.get(CONF_DEADBAND, DEFAULT_DEADBAND)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=0.1, max=3, step=0.1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="°C")),
             vol.Required(CONF_MIN_TEMP, default=current.get(CONF_MIN_TEMP, DEFAULT_MIN_TEMP)): _temp_number(),
             vol.Required(CONF_MAX_TEMP, default=current.get(CONF_MAX_TEMP, DEFAULT_MAX_TEMP)): _temp_number(),
             vol.Optional(CONF_MIN_ON_SECONDS, default=current.get(CONF_MIN_ON_SECONDS, DEFAULT_MIN_ON_SECONDS)): _seconds_number(),
             vol.Optional(CONF_MIN_OFF_SECONDS, default=current.get(CONF_MIN_OFF_SECONDS, DEFAULT_MIN_OFF_SECONDS)): _seconds_number(),
-            vol.Optional(CONF_SCHEDULE_START, default=current.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START)): selector.TimeSelector(),
-            vol.Optional(CONF_SCHEDULE_END, default=current.get(CONF_SCHEDULE_END, DEFAULT_SCHEDULE_END)): selector.TimeSelector(),
-            vol.Optional(CONF_SCHEDULE_DAYS, default=current.get(CONF_SCHEDULE_DAYS, [])): selector.SelectSelector(
-                selector.SelectSelectorConfig(options=DAY_OPTIONS, multiple=True, mode=selector.SelectSelectorMode.LIST)),
             vol.Optional(CONF_PRESENCE_ENTITIES, default=current.get(CONF_PRESENCE_ENTITIES, [])): _entity(
-                ["person", "device_tracker", "binary_sensor"], multiple=True),
-            vol.Optional(CONF_PRESENCE_OVERRIDES_SCHEDULE, default=current.get(CONF_PRESENCE_OVERRIDES_SCHEDULE, True)): selector.BooleanSelector(),
+                ["binary_sensor", "person", "device_tracker"], multiple=True),
             vol.Optional(CONF_DOOR_WINDOW_ENTITIES, default=current.get(CONF_DOOR_WINDOW_ENTITIES, [])): _entity("binary_sensor", multiple=True),
             vol.Optional(CONF_MANUAL_OVERRIDE_HOURS, default=current.get(CONF_MANUAL_OVERRIDE_HOURS, DEFAULT_MANUAL_OVERRIDE_HOURS)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=0.5, max=12, step=0.5, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="h")),
             vol.Optional(CONF_HISTORY_DAYS_FOR_INERTIA, default=current.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días")),
-            vol.Optional(CONF_PLAN_REFRESH_MINUTES, default=current.get(CONF_PLAN_REFRESH_MINUTES, DEFAULT_PLAN_REFRESH_MINUTES)): selector.NumberSelector(
+            vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=current.get(CONF_FORECAST_REFRESH_MINUTES, DEFAULT_FORECAST_REFRESH_MINUTES)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
             vol.Optional(CONF_SIMULATE, default=current.get(CONF_SIMULATE, True)): selector.BooleanSelector(),
         })
-        return self.async_show_form(step_id="init", data_schema=vol.Schema(fields))
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)

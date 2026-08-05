@@ -7,8 +7,7 @@
         "data": {
           "name": "Zone name",
           "hvac_capability": "Capability",
-          "priority": "Priority",
-          "control_mode": "Control mode"
+          "priority": "Priority"
         }
       },
       "sensors": {
@@ -22,6 +21,7 @@
       },
       "actuator": {
         "title": "Actuator",
+        "description": "Heating and cooling EACH have their own independent actuator — either can be a switch or an existing climate.* entity, in any combination.",
         "data": {
           "heat_actuator_mode": "Heating actuator type",
           "heat_switch": "Heating switch",
@@ -31,34 +31,47 @@
           "cool_climate_entity": "Existing climate.* for cooling (same entity as heating = reversible heat pump)"
         }
       },
-      "temps": {
-        "title": "Temperatures",
+      "presets": {
+        "title": "Presets",
+        "description": "Named presets instead of a fixed schedule — Climate Orchestrator switches between them by real presence. Format: \"Name: temperature\" separated by commas. Example: \"Comfort: 21, Away: 17, Party: 23\".",
         "data": {
-          "comfort_temp": "Comfort temperature",
-          "eco_temp": "Eco temperature",
-          "away_temp": "Away temperature",
+          "presets_text": "Presets"
+        }
+      },
+      "preset_roles": {
+        "title": "Automatic switching",
+        "description": "Which preset applies in \"Auto\" mode depending on real presence.",
+        "data": {
+          "presence_preset": "Preset when present",
+          "away_preset": "Preset when absent"
+        }
+      },
+      "limits": {
+        "title": "Safety limits",
+        "description": "These are ALWAYS enforced, no matter the active preset, presence, or manual mode — e.g. never below X in winter, never above X in summer, even with nobody home.",
+        "data": {
           "deadband": "Hysteresis",
-          "min_temp": "Minimum allowed",
-          "max_temp": "Maximum allowed",
+          "min_temp": "Minimum (always enforced floor)",
+          "max_temp": "Maximum (always enforced ceiling)",
           "min_on_seconds": "Minimum ON time (s)",
           "min_off_seconds": "Minimum OFF time (s)"
         }
       },
-      "schedule": {
-        "title": "Schedule, presence and options",
+      "options": {
+        "title": "Presence, doors/windows and options",
+        "description": "presence_entities is meant for the room's own PHYSICAL presence sensors (PIR, mmWave, occupancy binary_sensor) — not just \"home\". person./device_tracker. are also accepted as an extra signal.",
         "data": {
-          "schedule_start": "Comfort window start",
-          "schedule_end": "Comfort window end",
-          "schedule_days": "Days (empty = every day)",
           "presence_entities": "Presence entities",
-          "presence_overrides_schedule": "Presence can override the schedule",
           "door_window_entities": "Door/window sensors (pauses instantly when open)",
           "manual_override_hours": "Manual temperature override duration",
           "history_days_for_inertia": "History days for thermal inertia",
-          "plan_refresh_minutes": "Plan refresh interval",
+          "forecast_refresh_minutes": "Forecast refresh interval",
           "simulate": "Simulation mode (never touches real actuators)"
         }
       }
+    },
+    "error": {
+      "invalid_presets": "Presets don't have the expected \"Name: temperature\" format"
     }
   },
   "options": {
@@ -69,7 +82,6 @@
           "name": "Zone name",
           "hvac_capability": "Capability",
           "priority": "Priority",
-          "control_mode": "Control mode",
           "current_temp_sensor": "Temperature sensor",
           "humidity_sensor": "Humidity sensor (optional)",
           "outdoor_temp_sensor": "This zone's own outdoor sensor (optional)",
@@ -80,26 +92,25 @@
           "cool_actuator_mode": "Cooling actuator type",
           "cool_switch": "Cooling switch",
           "cool_climate_entity": "Existing climate.* for cooling (same entity as heating = reversible heat pump)",
-          "comfort_temp": "Comfort temperature",
-          "eco_temp": "Eco temperature",
-          "away_temp": "Away temperature",
+          "presets_text": "Presets (\"Name: temperature\", comma-separated)",
+          "presence_preset": "Preset name when present",
+          "away_preset": "Preset name when absent",
           "deadband": "Hysteresis",
-          "min_temp": "Minimum allowed",
-          "max_temp": "Maximum allowed",
+          "min_temp": "Minimum (always enforced floor)",
+          "max_temp": "Maximum (always enforced ceiling)",
           "min_on_seconds": "Minimum ON time (s)",
           "min_off_seconds": "Minimum OFF time (s)",
-          "schedule_start": "Comfort window start",
-          "schedule_end": "Comfort window end",
-          "schedule_days": "Days (empty = every day)",
           "presence_entities": "Presence entities",
-          "presence_overrides_schedule": "Presence can override the schedule",
           "door_window_entities": "Door/window sensors (pauses instantly when open)",
           "manual_override_hours": "Manual temperature override duration",
           "history_days_for_inertia": "History days for thermal inertia",
-          "plan_refresh_minutes": "Plan refresh interval",
+          "forecast_refresh_minutes": "Forecast refresh interval",
           "simulate": "Simulation mode (never touches real actuators)"
         }
       }
+    },
+    "error": {
+      "invalid_presets": "Presets don't have the expected \"Name: temperature\" format"
     }
   }
 }

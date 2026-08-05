@@ -148,12 +148,15 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="sensors", data_schema=schema)
 
     async def async_step_actuator(self, user_input=None):
-        """Calor y frío tienen CADA UNO su propio actuador, independiente
-        — pensado para el caso real mas comun con "heat_cool": un radiador
-        de solo calor (switch) MAS un aire acondicionado de solo frio
-        (climate.*) que son dos equipos DISTINTOS, no uno reversible. Si
-        son el mismo climate.* de verdad (un equipo reversible), basta con
-        poner la misma entidad en los dos campos "climate" — climate.py lo
+        """Calor y frío tienen CADA UNO su propio actuador, independiente,
+        y SIN asumir que uno es switch y el otro climate.* — cualquiera de
+        los dos puede ser lo uno o lo otro (un radiador puede tener su
+        propia entidad climate.*, p.ej. una válvula termostática, igual
+        que un aire acondicionado; y cualquiera puede ser tambien un
+        switch simple). Pensado sobre todo para el caso real mas comun con
+        "heat_cool": DOS equipos DISTINTOS, no uno reversible. Si son el
+        mismo climate.* de verdad (un equipo reversible), basta con poner
+        la misma entidad en los dos campos "climate" — climate.py lo
         detecta y le manda una unica orden con el modo correcto cada vez,
         nunca dos ordenes que se pisen."""
         if user_input is not None:

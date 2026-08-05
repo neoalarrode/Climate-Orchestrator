@@ -50,9 +50,14 @@ independiente:
   electrónica...). Se le manda su modo correcto ("heat"/"cool"/"off") y
   la temperatura objetivo.
 
-Si tu instalación tiene un radiador (switch, solo calor) y un aire
-acondicionado (climate.\*, solo frío), declara cada uno en su campo — la
-integración nunca los activa a la vez. Si tienes un único equipo
+Calor y frío son independientes de verdad: cualquier combinación vale. Un
+radiador puede ser switch simple O tener su propia entidad `climate.*`
+(una válvula termostática, por ejemplo) igual que un aire acondicionado —
+ninguno de los dos campos asume un tipo de dispositivo concreto, solo si
+lo controlas por switch o delegando en un climate.* ya existente. Si tu
+instalación tiene un actuador de calor y otro de frío DISTINTOS (sea cual
+sea su tipo), declara cada uno en su campo — la integración nunca los
+activa a la vez. Si tienes un único equipo
 reversible (aire acondicionado con bomba de calor), pon la MISMA entidad
 `climate.*` en el campo de calor y en el de frío: se detecta solo y se le
 manda una única orden con el modo que toque según la estación, nunca dos
@@ -103,12 +108,16 @@ por encima (anti-golpe-de-calor). No es configurable a propósito: es la
 
 ## 8. Inercia térmica aprendida
 
-Solo se aprende del lado (calor y/o frío) que tenga actuador tipo switch
-— con la integración sabe con certeza cuándo estuvo encendido. Con un
-`climate.*` delegado no hay forma fiable de saberlo, así que ese lado se
-queda con valores conservadores por defecto (marcado `thermal_model_reliable:
-false` en los atributos de la entidad) hasta que declares un switch, o
-para siempre si tu instalación es toda por `climate.*` delegado.
+Se aprende de los dos tipos de actuador, no solo de switch: con un
+`switch.*` propio se usa directamente su historial de encendido/apagado;
+con un `climate.*` delegado (un radiador con válvula termostática, un
+aire acondicionado con su propia electrónica...) se usa el atributo
+`hvac_action` de SU historial (heating/cooling frente a idle/off) — la
+mayoría de integraciones de clima lo publican. Si una entidad concreta
+nunca lo reporta, simplemente no se encuentran tramos válidos y esa zona
+se queda con valores conservadores por defecto (marcado
+`thermal_model_reliable: false` en los atributos de la entidad) — nunca
+se inventa una cifra.
 
 ## 9. Modo simulación
 

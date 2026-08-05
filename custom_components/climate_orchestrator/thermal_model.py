@@ -13,12 +13,20 @@ toquetea el termostato a mano). El resultado es un numero que se puede
 explicar en una frase: "de media, esta zona sube 0.9°C por hora
 calentando".
 
-Solo funciona con actuador de tipo "switch" (se sabe con certeza cuando
-estuvo actuando, porque lo enciende/apaga esta misma integracion). Con
-actuador de tipo "climate" (delegado en un climate.* ya existente) no hay
-forma fiable de saber cuando decidio calentar por su cuenta, asi que esas
-zonas se quedan con los valores por defecto y `reliable=False` — nunca se
-inventa una cifra.
+Funciona con los DOS tipos de actuador (ver const.py: cada lado, calor y
+frio, puede ser distinto):
+
+  - "switch": se usa directamente su estado on/off del historico — se
+    sabe con certeza cuando estuvo actuando, porque lo enciende/apaga
+    esta misma integracion.
+  - "climate" (delegado en un climate.* ya existente, p.ej. una valvula
+    termostatica): tambien se puede aprender, a partir del atributo
+    `hvac_action` de SU PROPIO historico (heating/cooling frente a
+    idle/off/otro) — la mayoria de integraciones de climate lo publican.
+    Si esa entidad en concreto nunca lo reporta (queda siempre en blanco),
+    sencillamente no se encuentran tramos validos y esa zona se queda con
+    los valores por defecto, marcados `reliable=False` — nunca se inventa
+    una cifra.
 """
 
 from __future__ import annotations
@@ -41,6 +49,18 @@ _LOGGER = logging.getLogger(__name__)
 
 MIN_RUN_MINUTES = 20
 MIN_VALID_RUNS = 3
+
+
+class _SyntheticState:
+    """Un estado on/off minimo (mismo shape que usa `_state_runs`), para
+    poder tratar un climate.* delegado exactamente igual que un switch
+    propio una vez traducido su `hvac_action` — ver `_climate_actuator_states`."""
+
+    __slots__ = ("state", "last_changed")
+
+    def __init__(self, state: str, last_changed: datetime) -> None:
+        self.state = state
+        self.last_changed = last_changed
 
 
 def _state_runs(states: list) -> list[tuple[datetime, datetime, str]]:
@@ -116,8 +136,45 @@ def _learn_idle_loss_coeff(temp_states: list, actuator_states: list, outdoor_sta
 
 
 def _history_for(hass: HomeAssistant, entity_id: str, start: datetime, end: datetime) -> list:
+    """Historico de una entidad simple (switch, sensor): una entrada por
+    cambio de SU `state`, sin atributos (mas barato)."""
     result = history.state_changes_during_period(hass, start, end, entity_id, no_attributes=True)
     return result.get(entity_id, [])
+
+
+def _climate_actuator_states(hass: HomeAssistant, entity_id: str, wanted_action: str,
+                              start: datetime, end: datetime) -> list:
+    """Traduce el historico de un climate.* delegado a la misma forma
+    on/off que un switch, usando su atributo `hvac_action` (heating/
+    cooling/idle/off/fan/drying): "on" mientras coincide con
+    `wanted_action` ("heating" o "cooling"), "off" el resto del tiempo.
+    Hace falta el historico CON atributos (mas caro que `_history_for`,
+    por eso es una funcion aparte) porque `hvac_action` es un atributo,
+    no el `state` de la entidad (que es el hvac_mode: heat/cool/off/...)."""
+    result = history.get_significant_states(
+        hass, start, end, [entity_id], significant_changes_only=False, minimal_response=False, no_attributes=False,
+    )
+    raw = result.get(entity_id, [])
+    synthetic = []
+    for s in raw:
+        action = (s.attributes or {}).get("hvac_action")
+        synthetic.append(_SyntheticState("on" if action == wanted_action else "off", s.last_changed))
+    return synthetic
+
+
+def _actuator_states_for_side(hass: HomeAssistant, zone: dict, side: str, wanted_action: str,
+                               start: datetime, end: datetime) -> list | None:
+    """`side` es "heat" o "cool". Devuelve el historico on/off de ese lado
+    (switch propio, o climate.* delegado traducido), o None si ese lado no
+    tiene actuador configurado."""
+    mode = zone.get(f"{side}_actuator_mode", "switch")
+    if mode == "switch":
+        switch = zone.get(f"{side}_switch")
+        return _history_for(hass, switch, start, end) if switch else None
+    if mode == "climate":
+        entity = zone.get(f"{side}_climate_entity")
+        return _climate_actuator_states(hass, entity, wanted_action, start, end) if entity else None
+    return None
 
 
 def _compute_model_sync(hass: HomeAssistant, zone: dict, days: int) -> dict:
@@ -132,16 +189,6 @@ def _compute_model_sync(hass: HomeAssistant, zone: dict, days: int) -> dict:
     if not zone.get("current_temp_sensor"):
         return model
 
-    # Calor y frio pueden tener actuadores de tipo distinto (ver const.py:
-    # "heat_actuator_mode"/"cool_actuator_mode" son independientes). Solo
-    # se aprende del lado que sea un switch propio — con un climate.*
-    # delegado no hay forma fiable de saber cuando decidio actuar por su
-    # cuenta, ver cabecera del modulo.
-    heat_switch = zone.get("heat_switch") if zone.get("heat_actuator_mode", "switch") == "switch" else None
-    cool_switch = zone.get("cool_switch") if zone.get("cool_actuator_mode", "switch") == "switch" else None
-    if not heat_switch and not cool_switch:
-        return model
-
     end = dt_util.utcnow()
     start = end - timedelta(days=days)
     temp_states = _history_for(hass, zone["current_temp_sensor"], start, end)
@@ -151,26 +198,29 @@ def _compute_model_sync(hass: HomeAssistant, zone: dict, days: int) -> dict:
     runs_used = 0
     capability = zone.get("hvac_capability", "heat")
 
-    if capability in ("heat", "heat_cool") and heat_switch:
-        heat_states = _history_for(hass, heat_switch, start, end)
-        rate, n = _learn_rate(temp_states, heat_states)
-        if rate is not None:
-            model["heating_rate_deg_h"] = rate
-            runs_used += n
+    heat_states = cool_states = None
 
-    if capability in ("cool", "heat_cool") and cool_switch:
-        cool_states = _history_for(hass, cool_switch, start, end)
-        rate, n = _learn_rate(temp_states, cool_states)
-        if rate is not None:
-            model["cooling_rate_deg_h"] = rate
-            runs_used += n
+    if capability in ("heat", "heat_cool"):
+        heat_states = _actuator_states_for_side(hass, zone, "heat", "heating", start, end)
+        if heat_states:
+            rate, n = _learn_rate(temp_states, heat_states)
+            if rate is not None:
+                model["heating_rate_deg_h"] = rate
+                runs_used += n
+
+    if capability in ("cool", "heat_cool"):
+        cool_states = _actuator_states_for_side(hass, zone, "cool", "cooling", start, end)
+        if cool_states:
+            rate, n = _learn_rate(temp_states, cool_states)
+            if rate is not None:
+                model["cooling_rate_deg_h"] = rate
+                runs_used += n
 
     outdoor_sensor = zone.get("outdoor_temp_sensor")
-    switch_for_idle = heat_switch or cool_switch
-    if outdoor_sensor and switch_for_idle:
+    actuator_states_for_idle = heat_states or cool_states
+    if outdoor_sensor and actuator_states_for_idle:
         outdoor_states = _history_for(hass, outdoor_sensor, start, end)
-        actuator_states = _history_for(hass, switch_for_idle, start, end)
-        coeff, n = _learn_idle_loss_coeff(temp_states, actuator_states, outdoor_states)
+        coeff, n = _learn_idle_loss_coeff(temp_states, actuator_states_for_idle, outdoor_states)
         if coeff is not None:
             model["idle_loss_coeff"] = coeff
             runs_used += n

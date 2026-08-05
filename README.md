@@ -55,11 +55,15 @@ hasta 20 segundos". Es la arquitectura correcta para un termostato.
 - **Precalienta lo justo**: en prioridad "ahorro", no enciende hasta el
   último momento en el que, a la velocidad real de esa zona, todavía
   llega a tiempo. En "confort", actúa en cuanto hace falta.
-- **Calor y frío con actuadores independientes**: un radiador (switch) y
-  un aire acondicionado (`climate.*`) distintos conviven sin pisarse —
-  nunca se activan los dos a la vez. Si el mismo equipo hace ambas cosas
-  (una bomba de calor reversible), se detecta solo y se le manda una
-  única orden con el modo correcto según la estación.
+- **Calor y frío con actuadores independientes**: cada lado (calor y
+  frío) se declara por separado, y CADA UNO puede ser un switch propio o
+  un `climate.*` ya existente — cualquier combinación: un radiador con
+  válvula termostática (`climate.*`) para calor y un aire acondicionado
+  simple (switch) para frío, o al revés, o los dos switch, o los dos
+  `climate.*` distintos. Nunca se activan los dos lados a la vez. Si el
+  mismo equipo hace ambas cosas (una bomba de calor reversible: se
+  declara el mismo `climate.*` en los dos campos), se detecta solo y se
+  le manda una única orden con el modo correcto según la estación.
 - **Modo persistente vs. anulación temporal**: cambiar el modo
   (apagado/calor/frío/auto) desde el termostato es una elección que se
   queda (se restaura tras un reinicio, igual que cualquier termostato

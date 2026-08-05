@@ -49,9 +49,14 @@ independent actuator:
   gets sent its correct mode ("heat"/"cool"/"off") and the target
   temperature.
 
-If your setup has a radiator (switch, heat only) and an air conditioner
-(climate.\*, cool only), declare each in its own field — the integration
-never activates both at once. If you have a single reversible unit (heat
+Heating and cooling are genuinely independent: any combination works. A
+radiator can be a plain switch OR have its own `climate.*` entity (a
+thermostatic valve, for instance), same as an air conditioner — neither
+field assumes a specific device type, only whether you control it by
+switch or by delegating to an existing climate.*. If your setup has a
+DIFFERENT actuator for heating and cooling (whatever their type), declare
+each in its own field — the integration never activates both at once. If
+you have a single reversible unit (heat
 pump AC), put the SAME `climate.*` entity in both the heating and cooling
 fields: it's auto-detected and sent a single command with whichever mode
 is correct for the season, never two commands stepping on each other.
@@ -97,12 +102,14 @@ safety net.
 
 ## 8. Learned thermal inertia
 
-Only learned for the side (heat and/or cool) that has a switch actuator —
-the integration knows for certain when it was on. With a delegated
-`climate.*` there's no reliable way to know, so that side keeps
-conservative defaults (flagged `thermal_model_reliable: false` in the
-entity's attributes) until you declare a switch, or forever if your setup
-is entirely delegated `climate.*`.
+Learned from both actuator types, not just switches: a plain `switch.*`
+uses its own on/off history directly; a delegated `climate.*` (a radiator
+with a thermostatic valve, an air conditioner with its own
+electronics...) uses the `hvac_action` attribute from ITS OWN history
+(heating/cooling vs. idle/off) — most climate integrations report it. If
+a particular entity never does, no valid runs are found and that side
+simply keeps conservative defaults (flagged `thermal_model_reliable:
+false` in the entity's attributes) — never a made-up number.
 
 ## 9. Simulation mode
 

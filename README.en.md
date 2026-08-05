@@ -54,11 +54,15 @@ architecture for a thermostat.
 - **Preheats just enough**: in "savings" priority, it won't turn on until
   the latest moment at which, at that zone's real measured rate, it still
   arrives on time. In "comfort" priority, it acts as soon as needed.
-- **Independent heating and cooling actuators**: a radiator (switch) and
-  a separate air conditioner (`climate.*`) coexist without stepping on
-  each other — never both active at once. If the same unit does both (a
-  reversible heat pump), it's auto-detected and sent a single command
-  with the correct mode for the season.
+- **Independent heating and cooling actuators**: each side (heating and
+  cooling) is declared separately, and EITHER can be a plain switch or an
+  existing `climate.*` — any combination: a radiator with a thermostatic
+  valve (`climate.*`) for heat and a simple switch-controlled AC for
+  cool, or the other way round, or both switches, or two distinct
+  `climate.*` entities. The two sides never activate at once. If the same
+  unit does both (a reversible heat pump: declare the same `climate.*` in
+  both fields), it's auto-detected and sent a single command with the
+  correct mode for the season.
 - **Standing mode vs. temporary override**: changing the mode
   (off/heat/cool/auto) from the thermostat is a choice that sticks
   (restored across restarts, like any real thermostat); changing the

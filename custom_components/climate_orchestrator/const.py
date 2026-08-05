@@ -14,16 +14,21 @@ DOMAIN = "climate_orchestrator"
 CONF_HVAC_CAPABILITY = "hvac_capability"       # "heat" | "cool" | "heat_cool"
 
 # Calor y frio tienen CADA UNO su propio actuador, independiente — no un
-# unico "actuator_mode" para toda la zona. Hace falta para el caso real
-# mas comun de "heat_cool": un radiador de solo calor (switch) MAS un aire
-# acondicionado de solo frio (climate.*) distintos, en vez de un unico
-# equipo reversible. Con "heat_actuator_mode"/"cool_actuator_mode" cada
-# uno puede ser "switch" (se enciende/apaga solo) o "climate" (se delega
-# en un climate.* que ya existe) de forma independiente. Si ambos apuntan
-# al MISMO climate.* (un equipo reversible de verdad), climate.py lo
-# detecta y le manda una unica orden con el modo correcto — nunca calor y
-# frio a la vez, y en invierno el propio equipo se activa en "heat" si es
-# el que toca, no se queda apagado ni mal puesto en "cool".
+# unico "actuator_mode" para toda la zona, y SIN asumir que uno es
+# siempre switch y el otro siempre climate.*: cualquier combinacion vale
+# (un radiador puede tener su propia entidad climate.*, p.ej. una valvula
+# termostatica, igual que un aire acondicionado; y cualquiera de los dos
+# puede ser tambien un simple switch). Hace falta sobre todo para el caso
+# real mas comun de "heat_cool" con DOS EQUIPOS DISTINTOS (no uno
+# reversible): cada lado declara el suyo por separado. Con
+# "heat_actuator_mode"/"cool_actuator_mode" cada uno puede ser "switch"
+# (se enciende/apaga solo) o "climate" (se delega en un climate.* que ya
+# existe) de forma independiente. Si ambos apuntan al MISMO climate.* (un
+# equipo reversible de verdad, p.ej. un aire acondicionado con bomba de
+# calor), climate.py lo detecta y le manda una unica orden con el modo
+# correcto — nunca calor y frio a la vez, y en invierno el propio equipo
+# se activa en "heat" si es el que toca, no se queda apagado ni mal
+# puesto en "cool".
 CONF_HEAT_ACTUATOR_MODE = "heat_actuator_mode"   # "switch" | "climate"
 CONF_HEAT_SWITCH = "heat_switch"
 CONF_HEAT_CLIMATE = "heat_climate_entity"

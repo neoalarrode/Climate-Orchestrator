@@ -61,6 +61,7 @@ class PresetNumber(RestoreNumber):
         self._attr_unique_id = preset_number_unique_id(entry.entry_id, preset_name, side)
         side_label = "calor" if side == "heat" else "frío"
         self._attr_name = f"{preset_name} ({side_label})"
+        self._attr_icon = "mdi:radiator" if side == "heat" else "mdi:snowflake-thermometer"
         self._attr_native_min_value = float(entry.data.get(CONF_MIN_TEMP, DEFAULT_MIN_TEMP))
         self._attr_native_max_value = float(entry.data.get(CONF_MAX_TEMP, DEFAULT_MAX_TEMP))
         self._attr_native_value = initial

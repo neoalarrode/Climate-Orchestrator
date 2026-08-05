@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.2
+
+- Corregido de verdad el problema de la carrera de arranque: el intento
+  de la v0.2.1 no bastaba porque un "apagado" grabado en el historial
+  DURANTE una carrera se restauraba luego en cualquier reinicio
+  posterior, incluso uno sin carrera — perpetuando el bug para siempre.
+  Ahora, mientras no se detecta ningún actuador todavía, la entidad se
+  marca "no disponible" en vez de escribir un modo resuelto (nunca se
+  graba nada que un reinicio futuro pueda restaurar como si fuera real).
+  Además, ahora también se escuchan los propios `climate.*` delegados: en
+  cuanto uno aparece, la zona reacciona al instante en vez de esperar al
+  próximo refresco periódico (hasta 10 minutos).
+- Iconos: entidades `number.*` de cada preset con icono propio
+  (radiador/copo de nieve según el lado), icono de termostato en la
+  entidad `climate.*`, y logo del proyecto añadido al README. El icono
+  que aparece en el buscador de "Añadir integración" de Home Assistant
+  depende del repositorio oficial `home-assistant/brands` (un envío
+  aparte, pendiente).
+
 ## 0.2.1
 
 - Corregido: si un `climate.*` delegado tardaba en cargar más que esta

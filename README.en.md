@@ -1,4 +1,8 @@
-<h1 align="center">🌡️ Climate Orchestrator</h1>
+<p align="center">
+  <img src="logo.png" width="120" alt="Climate Orchestrator">
+</p>
+
+<h1 align="center">Climate Orchestrator</h1>
 
 <p align="center">
   Adaptive heating and air conditioning — driven by physical presence,<br>

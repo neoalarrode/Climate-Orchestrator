@@ -104,6 +104,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     _attr_should_poll = False
     _attr_target_temperature_step = 0.5
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_icon = "mdi:home-thermometer"
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
@@ -272,17 +273,16 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         # recalcular la capacidad real ahora que el resto de entidades ya
         # deberia estar cargado.
         capability = self._refresh_hvac_modes()
-        was_pending = self._capability_pending
         self._reconcile_hvac_mode(capability)
 
         last_state = await self.async_get_last_state()
         valid_modes = {m.value for m in self._attr_hvac_modes}
-        if was_pending and capability:
-            # `_reconcile_hvac_mode` ya propuso un modo sensato — no lo
-            # pisamos con el ultimo estado restaurado: si esa entidad ya
-            # paso antes por el mismo arranque a ciegas, el estado
-            # restaurado podria ser el mismo "apagado" forzado, no una
-            # eleccion real del usuario.
+        if self._capability_pending:
+            # Todavia sin capacidad detectada (ver `_async_decide_and_act`,
+            # que marca la entidad "no disponible" mientras tanto en vez de
+            # escribir un modo resuelto) — no hay nada fiable que restaurar
+            # ni que proponer todavia. `_reconcile_hvac_mode` (mas arriba)
+            # ya se habria encargado si `capability` hubiera aparecido.
             pass
         elif last_state is not None and last_state.state in valid_modes:
             self._attr_hvac_mode = HVACMode(last_state.state)
@@ -299,6 +299,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             self.zone.get(CONF_OUTDOOR_TEMP_SENSOR),
             *(self.zone.get(CONF_PRESENCE_ENTITIES) or []),
             *(self.zone.get(CONF_DOOR_WINDOW_ENTITIES) or []),
+            *(self.zone.get(CONF_CLIMATE_ENTITIES) or []),
         ] if e]
         if watched:
             self.async_on_remove(async_track_state_change_event(self.hass, watched, self._handle_reactive_event))
@@ -313,6 +314,15 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     # -------------------------------------------------------- reactivo ----
 
     async def _handle_reactive_event(self, event) -> None:
+        # Tambien se escuchan los climate.* delegados (ver `watched` arriba)
+        # justamente para esto: en cuanto uno de ellos aparece/actualiza su
+        # estado por primera vez, reevaluar la capacidad AL INSTANTE en vez
+        # de esperar al proximo refresco periodico (hasta
+        # `forecast_refresh_minutes`, 10 min por defecto) — asi la carrera
+        # de arranque se resuelve en segundos, no en minutos.
+        if self._capability_pending:
+            capability = self._refresh_hvac_modes()
+            self._reconcile_hvac_mode(capability)
         await self._async_decide_and_act()
 
     async def _handle_forecast_refresh(self, now) -> None:
@@ -405,6 +415,22 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     # ---------------------------------------------------- decision barata --
 
     async def _async_decide_and_act(self) -> None:
+        if self._capability_pending:
+            # Todavia no se ha detectado NINGUN actuador (lo mas probable:
+            # un climate.* delegado que arranca mas despacio que esta
+            # integracion). A proposito NO se escribe un hvac_mode
+            # resuelto ("apagado") aqui: si se grabase, quedaria como el
+            # "ultimo estado conocido" y un reinicio futuro lo restauraria
+            # como si fuera una eleccion real, incluso en un arranque SIN
+            # carrera — perpetuando el bug para siempre. Mejor mostrar la
+            # entidad "no disponible" mientras tanto (un estado que HA
+            # nunca restaura como si fuera real) hasta que `_reconcile_hvac_mode`
+            # detecte capacidad real por primera vez, ya sea por el evento
+            # reactivo del propio actuador o por el refresco periodico.
+            self._attr_available = False
+            self.async_write_ha_state()
+            return
+
         current_temp = self._read_current_temp()
         self._attr_current_temperature = current_temp
         if current_temp is None:

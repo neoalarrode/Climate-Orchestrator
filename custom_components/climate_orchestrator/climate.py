@@ -120,6 +120,11 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
         self._attr_hvac_modes = [HVACMode.OFF]  # se recalcula de verdad justo abajo y en cada refresco
         capability = self._refresh_hvac_modes()
+        # Si en ESTE instante (construccion de la entidad) no se detecta
+        # ningun actuador, lo mas probable es que sea una carrera de
+        # arranque (el climate.* delegado todavia no cargo) y no que la
+        # zona de verdad no tenga nada configurado — ver `_reconcile_hvac_mode`.
+        self._capability_pending = not capability
 
         try:
             self._presets = presets_module.parse_presets(self.zone.get(CONF_PRESETS_TEXT, ""))
@@ -193,18 +198,25 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     def _refresh_hvac_modes(self) -> set[str]:
         """Recalcula `_attr_hvac_modes` (y las features soportadas) a
         partir de la capacidad real actual. Una zona con calor Y frio
-        expone UNICAMENTE "Auto" (HVACMode.HEAT_COOL) — nunca se deja
-        bloquear a mano a "solo calor"/"solo frio": es el System Mode
-        Auto estandar de Matter, con doble consigna (baja de calor, alta
-        de frio) en vez de una sola. Una zona de un solo sentido expone
-        solo ese modo. Se llama al crear la entidad y en cada refresco de
+        expone los CUATRO modos estandar: apagado, "Auto" (HVACMode.
+        HEAT_COOL, el System Mode Auto de Matter — doble consigna, baja de
+        calor y alta de frio, decide sola cual toca), y tambien calor y
+        frio por separado por si quieres bloquear la zona a mano a uno
+        solo. Una zona de un solo sentido expone solo ese modo (mas
+        apagado). Se llama al crear la entidad y en cada refresco de
         previsión — por si un climate.* delegado todavia no estaba
         disponible al arrancar HA, o cambia de capacidad tras un reload de
-        su propia integracion."""
+        su propia integracion (ver tambien `_capability_pending`, mas
+        abajo, para el caso de que ESTA entidad se cree antes de que el
+        actuador delegado este listo)."""
         capability = self._compute_capability()
         if {"heat", "cool"} <= capability:
-            self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT_COOL]
-            self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE_RANGE | ClimateEntityFeature.PRESET_MODE
+            self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT_COOL, HVACMode.HEAT, HVACMode.COOL]
+            self._attr_supported_features = (
+                ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+                | ClimateEntityFeature.TARGET_TEMPERATURE
+                | ClimateEntityFeature.PRESET_MODE
+            )
         elif "cool" in capability:
             self._attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL]
             self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
@@ -215,6 +227,19 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             self._attr_hvac_modes = [HVACMode.OFF]
             self._attr_supported_features = ClimateEntityFeature.PRESET_MODE
         return capability
+
+    def _reconcile_hvac_mode(self, capability: set[str]) -> None:
+        """Corrige la carrera de arranque: si al CREAR la entidad ningun
+        actuador estaba disponible todavia (p.ej. el climate.* delegado
+        tarda mas en cargar que esta integracion), la zona se quedaba
+        forzada a "apagado" — y nada la reevaluaba despues aunque el
+        actuador apareciera mas tarde, porque "apagado" es indistinguible
+        de una eleccion real del usuario. `_capability_pending` marca ese
+        arranque a ciegas; en cuanto se detecta capacidad real por primera
+        vez, se propone un modo sensato una unica vez."""
+        if self._capability_pending and capability:
+            self._capability_pending = False
+            self._attr_hvac_mode = self._default_hvac_mode(capability)
 
     @staticmethod
     def _default_hvac_mode(capability: set[str]) -> HVACMode:
@@ -228,9 +253,11 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
     def _effective_capability(self) -> str:
         """La capacidad que rige AHORA MISMO, directamente del modo hvac
-        activo. Con el diseño de arriba (Auto o nada para zonas duales)
-        esto coincide siempre con la capacidad real: no hace falta
-        consultar nada mas."""
+        activo: "heat_cool" en Auto (doble consigna), "heat"/"cool" si se
+        bloqueo la zona a mano a uno solo. Un modo solo aparece en
+        `_attr_hvac_modes` (y por tanto solo se puede seleccionar) si la
+        capacidad real lo soporta, asi que esto nunca pide mas de lo que
+        los actuadores de verdad pueden dar."""
         return {
             HVACMode.HEAT: "heat", HVACMode.COOL: "cool", HVACMode.HEAT_COOL: "heat_cool",
         }.get(self._attr_hvac_mode, "none")
@@ -245,10 +272,19 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         # recalcular la capacidad real ahora que el resto de entidades ya
         # deberia estar cargado.
         capability = self._refresh_hvac_modes()
+        was_pending = self._capability_pending
+        self._reconcile_hvac_mode(capability)
 
         last_state = await self.async_get_last_state()
         valid_modes = {m.value for m in self._attr_hvac_modes}
-        if last_state is not None and last_state.state in valid_modes:
+        if was_pending and capability:
+            # `_reconcile_hvac_mode` ya propuso un modo sensato — no lo
+            # pisamos con el ultimo estado restaurado: si esa entidad ya
+            # paso antes por el mismo arranque a ciegas, el estado
+            # restaurado podria ser el mismo "apagado" forzado, no una
+            # eleccion real del usuario.
+            pass
+        elif last_state is not None and last_state.state in valid_modes:
             self._attr_hvac_mode = HVACMode(last_state.state)
         else:
             self._attr_hvac_mode = self._default_hvac_mode(capability)
@@ -348,7 +384,13 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     # ---------------------------------------------------- previsión cara ----
 
     async def _async_refresh_forecast(self) -> None:
-        self._refresh_hvac_modes()
+        capability = self._refresh_hvac_modes()
+        # Ultima red de seguridad contra la carrera de arranque (ver
+        # `_reconcile_hvac_mode`): si el actuador delegado tardo mas en
+        # cargar que incluso el primer refresco tras `async_added_to_hass`,
+        # este ciclo periodico (cada `forecast_refresh_minutes`) acaba
+        # curandolo solo, en vez de dejar la zona en "apagado" para siempre.
+        self._reconcile_hvac_mode(capability)
 
         weather_entity = self.zone.get(CONF_WEATHER_ENTITY, "")
         self._outdoor_forecast = await outdoor.async_get_outdoor_forecast(

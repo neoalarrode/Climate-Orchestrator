@@ -146,17 +146,20 @@ comes from:
 - In **"savings"** priority, the hysteresis margin also widens when the
   forecast is stable (fewer on-cycles) and narrows only if it worsens.
 
-## 9. "Auto" mode (Matter-ready)
+## 9. "Auto" mode (Matter-ready), plus heat/cool separately
 
-A zone with genuine heating AND cooling exposes only `off`/`auto` modes —
-never a "heat only" or "cool only" mode for you to pick by hand. In
-"Auto" mode the zone has TWO active setpoints at once (the heat and cool
-setpoints of the active preset, see point 5): it heats if it drops below
-the heat one, cools if it rises above the cool one, and does nothing in
-between. This is exactly Matter's standard "Auto" System Mode (a low
-setpoint + a high setpoint), so any Matter/HomeKit bridge recognizes it
-with no translation or extra setup. A single-direction zone (heat only,
-or cool only) still exposes just that one mode.
+A zone with genuine heating AND cooling exposes FOUR modes: `off`,
+`auto`, `heat`, `cool`. In "Auto" mode (the default) the zone has TWO
+active setpoints at once (the heat and cool setpoints of the active
+preset, see point 5): it heats if it drops below the heat one, cools if
+it rises above the cool one, and does nothing in between — this is
+exactly Matter's standard "Auto" System Mode (a low setpoint + a high
+setpoint), so any Matter/HomeKit bridge recognizes it with no translation
+or extra setup. If you'd rather lock the zone by hand to "heat only" or
+"cool only" (e.g. turning cooling off for winter), you can still pick
+those modes separately. A single-direction zone (heat only, or cool
+only) still exposes just that one mode — "Auto" wouldn't make sense
+there.
 
 ## 10. Safety limits
 

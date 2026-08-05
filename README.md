@@ -55,12 +55,12 @@ hasta 20 segundos". Es la arquitectura correcta para un termostato.
   solos según la presencia FÍSICA real de la habitación (sensores
   PIR/mmWave, no solo "en casa" por el móvil) — o a mano, como una
   elección persistente hasta que vuelvas a "Automático".
-- **Modo "Auto" único, sin bloquear a mano "solo calor"/"solo frío"**: una
-  zona con calor y frío de verdad expone solamente `off`/`auto` — el
-  System Mode Auto estándar de Matter (consigna baja de calor + consigna
-  alta de frío, decide sola cuál toca cada momento), sin ofrecer un modo
-  "calor" o "frío" separado que tuvieras que elegir tú. Listo para
-  cualquier puente Matter/HomeKit sin traducciones.
+- **Modo "Auto" al estilo Matter, además de calor/frío por separado**: una
+  zona con calor y frío de verdad expone `off`/`auto`/`heat`/`cool` — en
+  "Auto" (el System Mode Auto estándar de Matter) tiene las dos consignas
+  activas a la vez, decide sola cuál toca cada momento; si prefieres
+  bloquearla a mano a "solo calor" o "solo frío" (p.ej. en verano), sigue
+  pudiéndose. Listo para cualquier puente Matter/HomeKit sin traducciones.
 - **Techo y suelo de seguridad siempre activos**: "nunca por debajo de
   X°C en invierno, nunca por encima de X°C en verano", aunque no haya
   nadie — independientes del preset activo o de la presencia.

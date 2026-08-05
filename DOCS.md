@@ -155,18 +155,20 @@ anticipación:
   cuando la previsión es estable (menos ciclos de encendido) y se
   estrecha solo si empeora.
 
-## 9. Modo "Auto" (compatible con Matter)
+## 9. Modo "Auto" (compatible con Matter), además de calor/frío por separado
 
 Una zona con calor y frío de verdad (los dos, no un solo sentido) expone
-únicamente los modos `off`/`auto` — nunca un modo "solo calor" o "solo
-frío" que tuvieras que elegir a mano. En modo "Auto" la zona tiene DOS
-consignas activas a la vez (la de calor y la de frío del preset activo,
-ver punto 5): calienta si baja de la de calor, enfría si sube de la de
-frío, y no hace nada entre medias. Es exactamente el System Mode "Auto"
-estándar de Matter (consigna baja + consigna alta), así que cualquier
-puente Matter/HomeKit lo reconoce sin traducciones ni configuración
-aparte. Una zona de un solo sentido (solo calor, o solo frío) sigue
-ofreciendo únicamente ese modo.
+CUATRO modos: `off`, `auto`, `heat`, `cool`. En modo "Auto" (el que se
+usa por defecto) la zona tiene DOS consignas activas a la vez (la de
+calor y la de frío del preset activo, ver punto 5): calienta si baja de
+la de calor, enfría si sube de la de frío, y no hace nada entre medias —
+es exactamente el System Mode "Auto" estándar de Matter (consigna baja +
+consigna alta), así que cualquier puente Matter/HomeKit lo reconoce sin
+traducciones ni configuración aparte. Si prefieres bloquear la zona a
+mano a "solo calor" o "solo frío" (p.ej. apagar la refrigeración en
+invierno), sigues pudiendo elegir esos modos por separado. Una zona de un
+solo sentido (solo calor, o solo frío) sigue ofreciendo únicamente ese
+modo — "Auto" no tendría sentido ahí.
 
 ## 10. Límites de seguridad
 

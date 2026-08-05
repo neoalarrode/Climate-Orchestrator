@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1
+
+- Corregido: si un `climate.*` delegado tardaba en cargar más que esta
+  integración (carrera de arranque), la zona se quedaba forzada a
+  "apagado" para siempre, aunque el actuador apareciera después — nada
+  volvía a proponerle un modo sensato. Ahora se reintenta al añadirse la
+  entidad y en cada refresco periódico hasta que se detecta capacidad
+  real por primera vez.
+- Corregido: una zona con calor y frío de verdad solo exponía
+  `off`/`auto`. "Auto" es una opción MÁS, no sustituye a poder bloquear
+  la zona a mano a "solo calor" o "solo frío" — ahora expone los cuatro
+  modos.
+
 ## 0.2.0 — primera versión publicada
 
 La primera versión de este proyecto fue un add-on Flask externo con MQTT

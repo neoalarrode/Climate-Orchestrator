@@ -53,12 +53,13 @@ architecture for a thermostat.
   They switch automatically based on the room's real PHYSICAL presence
   (PIR/mmWave sensors, not just "home" on a phone) — or by hand, as a
   standing choice until you set it back to "Auto".
-- **Single "Auto" mode, no manual heat/cool lock**: a zone with real
-  heating and cooling exposes only `off`/`auto` — Matter's standard Auto
-  System Mode (a low heat setpoint + a high cool setpoint, it decides on
-  its own which applies each moment), with no separate "heat" or "cool"
-  mode for you to pick. Ready for any Matter/HomeKit bridge with no
-  translation needed.
+- **Matter-style "Auto" mode, plus heat/cool separately**: a zone with
+  real heating and cooling exposes `off`/`auto`/`heat`/`cool` — in "Auto"
+  (Matter's standard Auto System Mode) it has both setpoints active at
+  once and decides on its own which applies each moment; if you'd rather
+  lock it to "heat only" or "cool only" by hand (e.g. for summer), you
+  still can. Ready for any Matter/HomeKit bridge with no translation
+  needed.
 - **Always-enforced safety ceiling and floor**: "never below X°C in
   winter, never above X°C in summer", even with nobody home — independent
   of the active preset or presence.

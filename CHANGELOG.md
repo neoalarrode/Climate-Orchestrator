@@ -1,13 +1,15 @@
 # Changelog
 
-## 0.1.0 — primera versión (reescrita como integración HACS)
+## 0.2.0 — primera versión publicada
 
 La primera versión de este proyecto fue un add-on Flask externo con MQTT
 Discovery. Se descartó antes de publicarse de verdad: un add-on solo
 puede sondear Home Assistant o depender de MQTT/websockets de repuesto
 para reaccionar rápido, mientras que una integración vive dentro del
-propio bus de eventos de HA. Esta es la primera versión de la reescritura
-como `custom_component` instalable vía HACS.
+propio bus de eventos de HA. Esta es la reescritura completa como
+`custom_component` instalable vía HACS — la primera versión con un
+release de verdad (antes de esta, cada cambio se empujaba directo a
+`main` sin etiquetar, así que HACS no podía ofrecer una actualización).
 
 - Una entrada de integración = una zona (config_flow con asistente
   guiado + options flow para editar), mismo patrón que
@@ -58,3 +60,9 @@ como `custom_component` instalable vía HACS.
   preset activo persistentes vía RestoreEntity; temperatura objetivo como
   anulación temporal con caducidad configurable.
 - Modo simulación por zona, activo por defecto.
+- Corregido: el selector de entidades del asistente podía quedarse vacío
+  y sin filtrar al escribir (`device_class=None` explícito rompía el
+  picker en el frontend).
+- Corregido: `PresetNumber` tumbaba el arranque de la zona entera con un
+  `TypeError` de MRO al heredar de `NumberEntity` y `RestoreNumber` a la
+  vez (`RestoreNumber` ya extiende `NumberEntity`).

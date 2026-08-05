@@ -70,22 +70,48 @@ def target_level_for_hour(dt: datetime, schedule: list[dict]) -> str:
 
 def build_target_levels(now: datetime, horizon_hours: int, schedule: list[dict],
                          presence_now: bool | None, presence_overrides_schedule: bool,
-                         priority: str) -> list[str]:
+                         priority: str, control_mode: str = "hibrido") -> list[str]:
     """
-    Nivel objetivo por hora, SOLO a partir del horario declarado — salvo la
-    hora actual (indice 0), que se puede ajustar con la presencia real
-    medida ahora mismo (nunca prevista, ver cabecera del modulo):
+    Nivel objetivo por hora. Tres formas de decidirlo, elegidas por zona
+    (`control_mode`) — a diferencia de Battery Orchestrator (donde solo
+    manda la tarifa), aqui la fuente de verdad puede ser el horario, la
+    presencia real, o ambas combinadas:
 
-      - presente ahora pero el horario dice "eco" -> sube a "confort" (a
-        alguien no se le deja pasar frio/calor porque el horario no lo
-        prevea).
-      - nadie presente ahora y el horario dice "confort" -> baja a "eco",
-        pero SOLO en prioridad "ahorro" (en "confort" se respeta el
-        horario declarado tal cual, por si la ausencia es un hueco corto
-        y no compensa dejar que la zona se enfrie/caliente de mas).
+      - "horario": SOLO el horario declarado, para todo el horizonte. La
+        presencia se ignora por completo (ni sube ni baja nada) — pensada
+        para zonas donde la ocupacion no es buen indicador (p.ej. un
+        pasillo, o presencia poco fiable).
+
+      - "presencia": SOLO la ocupacion real medida AHORA MISMO (nunca
+        prevista, seria una caja negra) — "confort" si hay alguien, "eco"
+        si no, la MISMA hora repetida en todo el horizonte (no hay horario
+        que anticipe una subida futura, asi que en prioridad "ahorro" el
+        motor simplemente actua en cuanto hace falta, sin poder
+        precalentar con antelacion — es la unica opcion honesta sin
+        horario que consultar).
+
+      - "hibrido" (la combinacion de siempre): el horario decide el resto
+        del horizonte, salvo la hora actual (indice 0), que la presencia
+        real puede ajustar:
+          - presente ahora pero el horario dice "eco" -> sube a "confort"
+            (a alguien no se le deja pasar frio/calor porque el horario no
+            lo preveia).
+          - nadie presente ahora y el horario dice "confort" -> baja a
+            "eco", pero SOLO en prioridad "ahorro" (en "confort" se
+            respeta el horario tal cual, por si la ausencia es un hueco
+            corto y no compensa dejar que la zona se enfrie/caliente).
     """
+    if control_mode == "presencia":
+        level = "confort" if presence_now else "eco"
+        return [level] * horizon_hours
+
     hours = [now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=i) for i in range(horizon_hours)]
     levels = [target_level_for_hour(h, schedule) for h in hours]
+
+    if control_mode == "horario":
+        return levels
+
+    # "hibrido"
     if presence_overrides_schedule and presence_now is not None:
         if presence_now and levels[0] == "eco":
             levels[0] = "confort"

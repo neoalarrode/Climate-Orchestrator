@@ -1,0 +1,105 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "New zone",
+        "description": "Climate Orchestrator manages each room as its own zone. Add one integration entry per zone (like versatile_thermostat).",
+        "data": {
+          "name": "Zone name",
+          "hvac_capability": "Capability",
+          "priority": "Priority",
+          "control_mode": "Control mode"
+        }
+      },
+      "sensors": {
+        "title": "Sensors",
+        "data": {
+          "current_temp_sensor": "Temperature sensor",
+          "humidity_sensor": "Humidity sensor (optional)",
+          "outdoor_temp_sensor": "This zone's own outdoor sensor (optional)",
+          "weather_entity": "weather.* entity with hourly forecast (optional)"
+        }
+      },
+      "actuator": {
+        "title": "Actuator",
+        "data": {
+          "heat_actuator_mode": "Heating actuator type",
+          "heat_switch": "Heating switch",
+          "heat_climate_entity": "Existing climate.* for heating",
+          "cool_actuator_mode": "Cooling actuator type",
+          "cool_switch": "Cooling switch",
+          "cool_climate_entity": "Existing climate.* for cooling (same entity as heating = reversible heat pump)"
+        }
+      },
+      "temps": {
+        "title": "Temperatures",
+        "data": {
+          "comfort_temp": "Comfort temperature",
+          "eco_temp": "Eco temperature",
+          "away_temp": "Away temperature",
+          "deadband": "Hysteresis",
+          "min_temp": "Minimum allowed",
+          "max_temp": "Maximum allowed",
+          "min_on_seconds": "Minimum ON time (s)",
+          "min_off_seconds": "Minimum OFF time (s)"
+        }
+      },
+      "schedule": {
+        "title": "Schedule, presence and options",
+        "data": {
+          "schedule_start": "Comfort window start",
+          "schedule_end": "Comfort window end",
+          "schedule_days": "Days (empty = every day)",
+          "presence_entities": "Presence entities",
+          "presence_overrides_schedule": "Presence can override the schedule",
+          "door_window_entities": "Door/window sensors (pauses instantly when open)",
+          "manual_override_hours": "Manual temperature override duration",
+          "history_days_for_inertia": "History days for thermal inertia",
+          "plan_refresh_minutes": "Plan refresh interval",
+          "simulate": "Simulation mode (never touches real actuators)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Edit zone",
+        "data": {
+          "name": "Zone name",
+          "hvac_capability": "Capability",
+          "priority": "Priority",
+          "control_mode": "Control mode",
+          "current_temp_sensor": "Temperature sensor",
+          "humidity_sensor": "Humidity sensor (optional)",
+          "outdoor_temp_sensor": "This zone's own outdoor sensor (optional)",
+          "weather_entity": "weather.* entity with hourly forecast (optional)",
+          "heat_actuator_mode": "Heating actuator type",
+          "heat_switch": "Heating switch",
+          "heat_climate_entity": "Existing climate.* for heating",
+          "cool_actuator_mode": "Cooling actuator type",
+          "cool_switch": "Cooling switch",
+          "cool_climate_entity": "Existing climate.* for cooling (same entity as heating = reversible heat pump)",
+          "comfort_temp": "Comfort temperature",
+          "eco_temp": "Eco temperature",
+          "away_temp": "Away temperature",
+          "deadband": "Hysteresis",
+          "min_temp": "Minimum allowed",
+          "max_temp": "Maximum allowed",
+          "min_on_seconds": "Minimum ON time (s)",
+          "min_off_seconds": "Minimum OFF time (s)",
+          "schedule_start": "Comfort window start",
+          "schedule_end": "Comfort window end",
+          "schedule_days": "Days (empty = every day)",
+          "presence_entities": "Presence entities",
+          "presence_overrides_schedule": "Presence can override the schedule",
+          "door_window_entities": "Door/window sensors (pauses instantly when open)",
+          "manual_override_hours": "Manual temperature override duration",
+          "history_days_for_inertia": "History days for thermal inertia",
+          "plan_refresh_minutes": "Plan refresh interval",
+          "simulate": "Simulation mode (never touches real actuators)"
+        }
+      }
+    }
+  }
+}

@@ -1,12 +1,12 @@
 <h1 align="center">🌡️ Climate Orchestrator</h1>
 
 <p align="center">
-  Adaptive heating and air conditioning — driven by presence, schedule<br>
-  and each zone's real thermal inertia. No black boxes.
+  Adaptive heating and air conditioning — driven by presence, schedule,<br>
+  doors/windows and each zone's real thermal inertia. No black boxes.
 </p>
 
 <p align="center">
-  <img alt="Home Assistant Add-on" src="https://img.shields.io/badge/Home%20Assistant-Add--on-8b5cf6?style=flat-square&labelColor=0b0a16">
+  <img alt="HACS" src="https://img.shields.io/badge/HACS-Custom-8b5cf6?style=flat-square&labelColor=0b0a16">
   <img alt="Deterministic" src="https://img.shields.io/badge/planner-deterministic-22d3ee?style=flat-square&labelColor=0b0a16">
   <img alt="No black boxes" src="https://img.shields.io/badge/no%20black%20boxes-eae8f7?style=flat-square&labelColor=0b0a16">
 </p>
@@ -17,76 +17,72 @@
 
 ---
 
-Home Assistant add-on, sibling of [Battery Orchestrator](https://github.com/neoalarrode/Battery-Orchestrator),
-that plans and executes heating/cooling for every zone in your home,
-every minute, live against your real installation. A custom, deterministic
-engine you can read top to bottom — no EMHASS, no `versatile_thermostat`
-style hard-to-reason parameters — plus a web UI where you declare every
-zone, sensor and schedule yourself. Each zone is exposed back to Home
-Assistant as a real `climate.*` entity (via MQTT Discovery), so it keeps
-working in Lovelace, Google Home or Alexa like any thermostat — it's just
-this engine deciding when to turn on, not a black box.
+A Home Assistant integration installable via **HACS**, sibling of
+[Battery Orchestrator](https://github.com/neoalarrode/Battery-Orchestrator),
+that manages heating/cooling for every zone in your home with a custom,
+deterministic engine you can read top to bottom — no EMHASS, no
+hard-to-reason `versatile_thermostat`-style parameters. Every zone you
+declare becomes a **native** Home Assistant `climate.*` entity: it works
+in Lovelace, Google Home, Alexa, or any Matter/HomeKit bridge exactly like
+any other thermostat.
 
-## Why it exists
+## Why an integration, not an add-on
 
-`versatile_thermostat` and similar integrations handle fine-grained
-thermostat control well, but the decision of WHEN to heat is usually a
-fixed schedule or a preset with little explanation. Climate Orchestrator
-does what Battery Orchestrator already does for batteries: a two-pass
-algorithm you can read in full, where every hourly decision comes with a
-plain-text reason ("preheating: starts just in time to reach 21°C by
-07:00", "no action: within range", "holding safety minimum, frost
-protection"...).
+This project's first version was an external add-on with its own web UI.
+It was deliberately dropped: an add-on can only poll Home Assistant over
+REST every few seconds, or lean on MQTT/websockets as a workaround to
+react faster. An integration lives **inside** HA's own event bus — so "a
+window just opened" or "someone just walked into the room" turns into a
+real instant reaction, not "within up to 20 seconds". It's the correct
+architecture for a thermostat.
 
 ## What it does
 
-- **Plans each zone independently**, combining the schedule you declare
-  ("comfort" windows), real presence measured right now (person,
-  device_tracker...) and the outdoor weather forecast (from an HA
-  `weather.*` entity, or your own outdoor sensor).
-- **Learns each zone's real thermal inertia** from its own history: how
-  many degrees per hour it actually gains while heating, how many it
-  loses with the actuator off relative to the outdoor delta — never a
-  made-up number or a generic textbook physical model.
+- **One zone = one integration entry** (click "+ Add integration" once
+  per room — same pattern as `versatile_thermostat`). Each zone exposes
+  its own `climate.*` with the decision's reason visible in its
+  attributes.
+- **Reacts instantly** to temperature, presence, and doors/windows — via
+  HA's event bus (`async_track_state_change_event`), not polling. An open
+  door/window pauses the zone the moment it happens.
+- **Three control modes per zone**: schedule only, real presence only
+  (never predicted — that would be a black box), or hybrid (schedule +
+  real presence can bump the current hour's level up or down).
+- **Learns each zone's real thermal inertia** from its own history (HA's
+  recorder): °C/hour while heating, loss coefficient vs. outdoor delta —
+  never a made-up number.
 - **Preheats just enough**: in "savings" priority, it won't turn on until
-  the latest moment at which, at that zone's actually-measured heating
-  rate, it can still reach comfort exactly on time. In "comfort" priority,
-  it acts as soon as needed, no waiting.
-- **Respects safety minimums** (frost / heat-stroke protection) no matter
-  what the schedule or presence say.
-- **Anti short-cycling**: configurable minimum on/off time per zone, so a
-  relay isn't destroyed over tenths of a degree.
-- **Exposes each zone as `climate.*` in Home Assistant** via MQTT
-  Discovery: shows up in Lovelace, Google Home, Alexa... Changing mode or
-  target temperature from there becomes a "manual override" for a
-  configurable time, after which the zone returns to the automatic plan
-  on its own.
-- **Two ways to act**: switch a heater/AC on/off directly (with
-  hysteresis), or delegate to an existing `climate.*` entity (e.g. a
-  thermostatic radiator valve with its own electronics).
-- **Read-only wallpanel**: like Battery Orchestrator, its own port to keep
-  the panel fixed on a wall tablet without going through Home Assistant's
-  login.
-- **Everything configurable from the web**: zones, schedules, sensors,
-  MQTT broker — nothing hardcoded. Exportable/importable configuration.
+  the latest moment at which, at that zone's real measured rate, it still
+  arrives on time. In "comfort" priority, it acts as soon as needed.
+- **Independent heating and cooling actuators**: a radiator (switch) and
+  a separate air conditioner (`climate.*`) coexist without stepping on
+  each other — never both active at once. If the same unit does both (a
+  reversible heat pump), it's auto-detected and sent a single command
+  with the correct mode for the season.
+- **Standing mode vs. temporary override**: changing the mode
+  (off/heat/cool/auto) from the thermostat is a choice that sticks
+  (restored across restarts, like any real thermostat); changing the
+  target temperature is a temporary override with a configurable expiry,
+  after which the zone returns to the automatic plan on its own.
+- **Safety protection**: frost / heat-stroke protection, always active no
+  matter what schedule, presence, or manual mode say.
+- **Per-zone simulation mode**: computes and shows what it would do
+  without touching any real actuator, until you trust its decisions.
 
 ## Installation
 
-1. Install and set up the official **Mosquitto broker** add-on (Settings →
-   Add-ons → Store) if you don't have it yet, plus Home Assistant's MQTT
-   integration.
-2. In Home Assistant: **Settings → Add-ons → Add-on Store → ⋮ →
-   Repositories**, and add:
-   ```
-   https://github.com/neoalarrode/Climate-Orchestrator
-   ```
-3. Find "Climate Orchestrator" in the store, install it and start it.
-4. Open it from the sidebar (uses Ingress) and add your first zone.
+1. HACS → ⋮ → Custom repositories → add
+   `https://github.com/neoalarrode/Climate-Orchestrator` as type
+   **Integration**.
+2. Install "Climate Orchestrator" and restart Home Assistant.
+3. **Settings → Devices & services → Add integration** → search
+   "Climate Orchestrator" → follow the wizard to add your first zone.
+   Repeat for each room.
 
-Step-by-step setup instructions in [DOCS.en.md](DOCS.en.md).
+Full field-by-field setup guide in [DOCS.en.md](DOCS.en.md).
 
 ## Project status
 
-Actively developed — see [CHANGELOG.md](CHANGELOG.md). Always starts in
-simulation mode: you'll see exactly what the add-on would do without
-touching your real actuators, until you trust its decisions.
+Actively developed — see [CHANGELOG.md](CHANGELOG.md). Turn on simulation
+mode on every new zone and review its `reason` attribute for a few days
+before letting it act for real.

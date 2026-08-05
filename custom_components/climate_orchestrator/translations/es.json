@@ -1,0 +1,105 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Nueva zona",
+        "description": "Climate Orchestrator gestiona cada habitación como su propia zona. Añade una entrada de integración por zona (igual que versatile_thermostat).",
+        "data": {
+          "name": "Nombre de la zona",
+          "hvac_capability": "Capacidad",
+          "priority": "Prioridad",
+          "control_mode": "Modo de control"
+        }
+      },
+      "sensors": {
+        "title": "Sensores",
+        "data": {
+          "current_temp_sensor": "Sensor de temperatura",
+          "humidity_sensor": "Sensor de humedad (opcional)",
+          "outdoor_temp_sensor": "Sensor exterior propio de esta zona (opcional)",
+          "weather_entity": "Entidad weather.* con previsión horaria (opcional)"
+        }
+      },
+      "actuator": {
+        "title": "Actuador",
+        "data": {
+          "heat_actuator_mode": "Tipo de actuador de calefacción",
+          "heat_switch": "Switch de calefacción",
+          "heat_climate_entity": "climate.* existente para calefacción",
+          "cool_actuator_mode": "Tipo de actuador de refrigeración",
+          "cool_switch": "Switch de refrigeración",
+          "cool_climate_entity": "climate.* existente para refrigeración (misma entidad que calefacción = bomba de calor reversible)"
+        }
+      },
+      "temps": {
+        "title": "Temperaturas",
+        "data": {
+          "comfort_temp": "Temperatura de confort",
+          "eco_temp": "Temperatura eco",
+          "away_temp": "Temperatura de ausencia",
+          "deadband": "Histéresis",
+          "min_temp": "Mínimo permitido",
+          "max_temp": "Máximo permitido",
+          "min_on_seconds": "Tiempo mínimo encendido (s)",
+          "min_off_seconds": "Tiempo mínimo apagado (s)"
+        }
+      },
+      "schedule": {
+        "title": "Horario, presencia y opciones",
+        "data": {
+          "schedule_start": "Inicio de la franja de confort",
+          "schedule_end": "Fin de la franja de confort",
+          "schedule_days": "Días (vacío = todos)",
+          "presence_entities": "Entidades de presencia",
+          "presence_overrides_schedule": "La presencia puede anular el horario",
+          "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
+          "manual_override_hours": "Duración de la anulación manual de temperatura",
+          "history_days_for_inertia": "Días de histórico para la inercia térmica",
+          "plan_refresh_minutes": "Frecuencia de recálculo del plan",
+          "simulate": "Modo simulación (nunca toca actuadores reales)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Editar zona",
+        "data": {
+          "name": "Nombre de la zona",
+          "hvac_capability": "Capacidad",
+          "priority": "Prioridad",
+          "control_mode": "Modo de control",
+          "current_temp_sensor": "Sensor de temperatura",
+          "humidity_sensor": "Sensor de humedad (opcional)",
+          "outdoor_temp_sensor": "Sensor exterior propio de esta zona (opcional)",
+          "weather_entity": "Entidad weather.* con previsión horaria (opcional)",
+          "heat_actuator_mode": "Tipo de actuador de calefacción",
+          "heat_switch": "Switch de calefacción",
+          "heat_climate_entity": "climate.* existente para calefacción",
+          "cool_actuator_mode": "Tipo de actuador de refrigeración",
+          "cool_switch": "Switch de refrigeración",
+          "cool_climate_entity": "climate.* existente para refrigeración (misma entidad que calefacción = bomba de calor reversible)",
+          "comfort_temp": "Temperatura de confort",
+          "eco_temp": "Temperatura eco",
+          "away_temp": "Temperatura de ausencia",
+          "deadband": "Histéresis",
+          "min_temp": "Mínimo permitido",
+          "max_temp": "Máximo permitido",
+          "min_on_seconds": "Tiempo mínimo encendido (s)",
+          "min_off_seconds": "Tiempo mínimo apagado (s)",
+          "schedule_start": "Inicio de la franja de confort",
+          "schedule_end": "Fin de la franja de confort",
+          "schedule_days": "Días (vacío = todos)",
+          "presence_entities": "Entidades de presencia",
+          "presence_overrides_schedule": "La presencia puede anular el horario",
+          "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
+          "manual_override_hours": "Duración de la anulación manual de temperatura",
+          "history_days_for_inertia": "Días de histórico para la inercia térmica",
+          "plan_refresh_minutes": "Frecuencia de recálculo del plan",
+          "simulate": "Modo simulación (nunca toca actuadores reales)"
+        }
+      }
+    }
+  }
+}

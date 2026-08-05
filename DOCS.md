@@ -1,98 +1,118 @@
 # Climate Orchestrator — Guía de configuración
 
-## 1. Requisitos previos
+## 1. Instalación
 
-- El addon oficial **Mosquitto broker** instalado y arrancado (Ajustes →
-  Add-ons → Tienda), con la integración MQTT de Home Assistant configurada
-  (normalmente se autoconfigura sola al instalar Mosquitto).
-- Un sensor de temperatura por cada zona que quieras gestionar (un
-  `sensor.*` que reporte °C).
-- El actuador de cada zona: o bien un `switch.*` que encienda/apague tu
-  calefactor/AC, o un `climate.*` ya existente en el que delegar.
+1. HACS debe estar instalado en tu Home Assistant.
+2. HACS → menú ⋮ (arriba a la derecha) → **Repositorios personalizados**
+   → pega `https://github.com/neoalarrode/Climate-Orchestrator` → tipo
+   **Integración** → **Añadir**.
+3. Busca "Climate Orchestrator" en HACS, instálala.
+4. Reinicia Home Assistant (obligatorio: es una integración nueva, no
+   basta con recargar).
+5. **Ajustes → Dispositivos y servicios → Añadir integración** → busca
+   "Climate Orchestrator".
 
-## 2. Broker MQTT
+## 2. Una zona = una entrada de integración
 
-En la pestaña **Configuración → Broker MQTT**:
+Cada vez que sigues el asistente, das de alta **una** zona (una
+habitación, un espacio). Para gestionar el salón y dos dormitorios,
+repites "Añadir integración" tres veces. Cada zona vive como su propio
+dispositivo, con su propia entidad `climate.*` — bórrala como cualquier
+otra integración (Ajustes → Dispositivos y servicios → esa entrada → ⋮ →
+Eliminar) si dejas de necesitarla.
 
-- **Host**: `core-mosquitto` si usas el addon oficial de Mosquitto (valor
-  por defecto). Si usas un broker externo, la IP/hostname que corresponda.
-- **Puerto**: `1883` por defecto.
-- **Usuario/Contraseña**: los que hayas configurado en el addon Mosquitto
-  (usuario del propio Home Assistant si usas login integrado, o el que
-  hayas creado a mano).
+## 3. El asistente, paso a paso
 
-Sin un broker MQTT accesible, las zonas se siguen planificando y
-ejecutando (si tienen actuador), pero no aparecerán como `climate.*` en
-Home Assistant — la interfaz avisa con el indicador "MQTT: sin conectar".
+**Paso 1 — General**: nombre de la zona, capacidad (solo calor / solo
+frío / calor y frío), prioridad, modo de control.
 
-## 3. Dar de alta una zona
+- **Prioridad**: *Confort* actúa en cuanto la temperatura se sale de
+  rango; *Ahorro* usa la inercia térmica aprendida para arrancar lo más
+  tarde posible; *Manual* nunca decide sola, solo refleja el control
+  manual del termostato.
+- **Modo de control**: *Solo horario* ignora la presencia; *Solo
+  presencia* ignora el horario (confort si hay alguien ahora mismo, eco
+  si no); *Híbrido* combina ambos (horario de base, la presencia real
+  puede subir/bajar el nivel de la hora actual).
 
-En **Configuración → Zonas → + Añadir zona**:
+**Paso 2 — Sensores**: sensor de temperatura (obligatorio), humedad
+(opcional), sensor exterior propio de la zona (opcional, más preciso que
+el general) y una entidad `weather.*` con previsión horaria (opcional,
+recomendada para la prioridad "ahorro").
 
-- **Nombre**: como quieras que aparezca en Home Assistant.
-- **Capacidad**: solo calor, solo frío, o ambos (una zona con bomba de
-  calor reversible, por ejemplo).
-- **Prioridad**:
-  - *Confort*: actúa en cuanto la temperatura se sale de rango, sin
-    esperar. Recomendada si quieres máxima comodidad sin pensar en ahorro.
-  - *Ahorro*: usa la inercia térmica aprendida para arrancar lo más tarde
-    posible y llegar justo a tiempo a cada franja de confort — menos horas
-    de actuador encendido a cambio de fiarse del modelo aprendido.
-  - *Manual*: la zona no decide nada sola; solo refleja lo que ordenes a
-    mano desde el termostato de Home Assistant.
-- **Sensor de temperatura**: obligatorio.
-- **Sensor de humedad / sensor exterior propio**: opcionales.
-- **Actuador**:
-  - *Switch*: declara el `switch.*` de calor y/o de frío. El addon los
-    enciende/apaga él mismo con histéresis y anti-ciclado.
-  - *Delegar en climate.\**: declara el `climate.*` ya existente; el addon
-    solo le manda modo y temperatura objetivo.
-- **Temperaturas**: confort (cuando la franja horaria está activa o hay
-  presencia), eco (fuera de franja, sin presencia) y ausente (referencia,
-  ver protección mínima más abajo). Histéresis: margen antes de
-  actuar/parar.
-- **Anti-ciclado**: segundos mínimos que el actuador debe permanecer
-  encendido/apagado antes de poder cambiar otra vez.
-- **Presencia**: entidades `person.*`/`device_tracker.*`/`binary_sensor.*`
-  — si alguna está "en casa"/"on", la zona se considera ocupada AHORA
-  MISMO (nunca se predice presencia futura, sería una caja negra). Con
-  "la presencia puede anular el horario" activo: alguien en casa sube
-  a confort aunque el horario diga que no toca; nadie en casa baja a eco
-  aunque el horario diga que sí toca (esto último solo en prioridad
-  "ahorro").
-- **Horario**: franjas de "confort" por día de la semana. Fuera de ellas,
-  la zona está en "eco". Sin ninguna franja declarada, la zona está en
-  "eco" todo el día (solo actúa por protección mínima).
+**Paso 3 — Actuador**: calor y frío tienen CADA UNO su propio actuador,
+independiente:
 
-## 4. Protección de seguridad
+- *Switch*: la integración enciende/apaga un `switch.*` con histéresis y
+  anti-ciclado (tiempo mínimo encendido/apagado).
+- *climate.\**: delega en una entidad `climate.*` que ya exista (una
+  válvula termostatica, un aire acondicionado con su propia
+  electrónica...). Se le manda su modo correcto ("heat"/"cool"/"off") y
+  la temperatura objetivo.
 
-Sea cual sea el horario o la presencia, una zona de calor nunca deja que
-la temperatura baje más de 3°C por debajo de su nivel "ausente"
-(anti-heladas), y una zona de frío nunca deja que suba más de 3°C por
-encima (anti-golpe-de-calor). No es configurable a propósito: es la última
-red de seguridad.
+Si tu instalación tiene un radiador (switch, solo calor) y un aire
+acondicionado (climate.\*, solo frío), declara cada uno en su campo — la
+integración nunca los activa a la vez. Si tienes un único equipo
+reversible (aire acondicionado con bomba de calor), pon la MISMA entidad
+`climate.*` en el campo de calor y en el de frío: se detecta solo y se le
+manda una única orden con el modo que toque según la estación, nunca dos
+órdenes que se pisen.
 
-## 5. Inercia térmica aprendida
+**Paso 4 — Temperaturas**: confort, eco, ausencia, histéresis, límites
+mínimo/máximo, tiempos mínimos de encendido/apagado (solo relevantes con
+actuador tipo switch).
 
-Solo se aprende de zonas con actuador tipo "switch" (el addon necesita
-saber con certeza cuándo estuvo encendido). Hace falta al menos un puñado
-de tramos de al menos 20 minutos seguidos en el mismo estado dentro del
-historial de Home Assistant — normalmente unos pocos días de uso real. Hasta
-entonces se usan valores conservadores por defecto, y la interfaz lo deja
-dicho ("inercia térmica: estimación inicial").
+**Paso 5 — Horario, presencia y opciones**: franja horaria de confort
+(inicio, fin, días), entidades de presencia, si la presencia puede anular
+el horario, sensores de puerta/ventana, duración de la anulación manual
+de temperatura, días de histórico para la inercia térmica, frecuencia de
+recálculo del plan, y modo simulación.
 
-## 6. Anulación manual desde Home Assistant
+## 4. Editar una zona
 
-Cambiar el modo o la temperatura objetivo desde la tarjeta de termostato
-de Home Assistant (o Google Home/Alexa) pone esa zona en "anulación
-manual" durante 2 horas (fijo en esta versión). Mientras dure, el motor
-deja de decidir por su cuenta para esa zona; pasado ese tiempo, vuelve
-sola al plan automático. Se puede retirar antes a mano desde la pestaña
-"Estado actual".
+Ajustes → Dispositivos y servicios → Climate Orchestrator → la zona que
+quieras → **Configurar**. Se abre un único formulario con todos los
+campos precargados. Al guardar, la zona se recarga entera.
 
-## 7. Modo simulación
+## 5. Puertas y ventanas
 
-Con "Modo simulación" activo (por defecto), el addon calcula el plan y lo
-publica en Home Assistant, pero NUNCA enciende/apaga ni manda órdenes a
-ningún actuador real. Revisa unos días los motivos y las horas que elegiría
-antes de desactivarlo.
+Cualquier sensor de puerta/ventana declarado que esté "abierto" pausa la
+zona **al instante** (vía el bus de eventos de HA, no hay que esperar a
+ningún ciclo), sea cual sea el plan o el modo. Al cerrarse, vuelve sola al
+cálculo automático.
+
+## 6. Modo vs. temperatura: dos comportamientos distintos
+
+- **Cambiar el MODO** (apagado / calor / frío / auto) desde la tarjeta de
+  termostato, Google Home, Alexa o un puente Matter/HomeKit es una
+  elección que se **queda** — no caduca sola, se restaura tras un
+  reinicio, igual que cualquier termostato real. Bloquear un `heat_cool`
+  a "solo frío" en verano, por ejemplo, se mantiene hasta que lo cambies
+  tú.
+- **Cambiar la TEMPERATURA objetivo** es una anulación **temporal**: dura
+  lo que hayas configurado (por defecto 2h) y después la zona vuelve sola
+  al plan automático.
+
+## 7. Protección de seguridad
+
+Sea cual sea el horario, la presencia o el modo manual, una zona de calor
+nunca deja que la temperatura baje más de 3°C por debajo de su nivel
+"ausencia" (anti-heladas), y una de frío nunca deja que suba más de 3°C
+por encima (anti-golpe-de-calor). No es configurable a propósito: es la
+última red de seguridad.
+
+## 8. Inercia térmica aprendida
+
+Solo se aprende del lado (calor y/o frío) que tenga actuador tipo switch
+— con la integración sabe con certeza cuándo estuvo encendido. Con un
+`climate.*` delegado no hay forma fiable de saberlo, así que ese lado se
+queda con valores conservadores por defecto (marcado `thermal_model_reliable:
+false` en los atributos de la entidad) hasta que declares un switch, o
+para siempre si tu instalación es toda por `climate.*` delegado.
+
+## 9. Modo simulación
+
+Con "Modo simulación" activo en una zona (por defecto), la integración
+calcula y publica lo que haría (visible en los atributos de la entidad),
+pero nunca manda una orden real a ningún actuador. Revisa unos días el
+atributo `reason` antes de desactivarlo.

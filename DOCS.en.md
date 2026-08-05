@@ -1,93 +1,112 @@
 # Climate Orchestrator — Setup guide
 
-## 1. Prerequisites
+## 1. Installation
 
-- The official **Mosquitto broker** add-on installed and running (Settings
-  → Add-ons → Store), with Home Assistant's MQTT integration configured
-  (usually auto-configures itself when you install Mosquitto).
-- A temperature sensor for each zone you want to manage (a `sensor.*`
-  reporting °C).
-- Each zone's actuator: either a `switch.*` that turns your heater/AC on
-  and off, or an existing `climate.*` entity to delegate to.
+1. HACS must be installed on your Home Assistant.
+2. HACS → ⋮ menu (top right) → **Custom repositories** → paste
+   `https://github.com/neoalarrode/Climate-Orchestrator` → type
+   **Integration** → **Add**.
+3. Find "Climate Orchestrator" in HACS, install it.
+4. Restart Home Assistant (required: it's a new integration, a reload
+   isn't enough).
+5. **Settings → Devices & services → Add integration** → search
+   "Climate Orchestrator".
 
-## 2. MQTT broker
+## 2. One zone = one integration entry
 
-Under **Configuration → MQTT broker**:
+Each time you go through the wizard, you add **one** zone (one room, one
+space). To manage the living room and two bedrooms, run "Add integration"
+three times. Each zone lives as its own device with its own `climate.*`
+entity — delete it like any other integration (Settings → Devices &
+services → that entry → ⋮ → Delete) when you no longer need it.
 
-- **Host**: `core-mosquitto` if you use the official Mosquitto add-on
-  (default). For an external broker, its IP/hostname.
-- **Port**: `1883` by default.
-- **Username/Password**: whatever you configured in the Mosquitto add-on.
+## 3. The wizard, step by step
 
-Without a reachable MQTT broker, zones are still planned and executed (if
-they have an actuator), but won't appear as `climate.*` in Home Assistant
-— the UI shows "MQTT: not connected".
+**Step 1 — General**: zone name, capability (heat only / cool only /
+heat and cool), priority, control mode.
 
-## 3. Adding a zone
+- **Priority**: *Comfort* acts as soon as temperature drifts out of
+  range; *Savings* uses the learned thermal inertia to start as late as
+  possible; *Manual* never decides on its own, only reflects the
+  thermostat's manual control.
+- **Control mode**: *Schedule only* ignores presence; *Presence only*
+  ignores the schedule (comfort if someone's home right now, eco if not);
+  *Hybrid* combines both (schedule as the base, real presence can bump
+  the current hour's level up or down).
 
-Under **Configuration → Zones → + Add zone**:
+**Step 2 — Sensors**: temperature sensor (required), humidity (optional),
+this zone's own outdoor sensor (optional, more precise than a global one)
+and a `weather.*` entity with hourly forecast (optional, recommended for
+"savings" priority).
 
-- **Name**: however you want it to appear in Home Assistant.
-- **Capability**: heat only, cool only, or both (e.g. a reversible heat
-  pump zone).
-- **Priority**:
-  - *Comfort*: acts as soon as temperature drifts out of range, no
-    waiting. Recommended for maximum comfort without thinking about
-    savings.
-  - *Savings*: uses the learned thermal inertia to start as late as
-    possible while still arriving on time for each comfort window — fewer
-    actuator-on hours, in exchange for trusting the learned model.
-  - *Manual*: the zone never decides on its own; it only reflects what you
-    command by hand from the Home Assistant thermostat.
-- **Temperature sensor**: required.
-- **Humidity sensor / own outdoor sensor**: optional.
-- **Actuator**:
-  - *Switch*: declare the heat and/or cool `switch.*`. The add-on turns
-    them on/off itself with hysteresis and anti short-cycling.
-  - *Delegate to climate.\**: declare the existing `climate.*`; the add-on
-    only sends it mode and target temperature.
-- **Temperatures**: comfort (when the schedule window is active or
-  someone's present), eco (outside the window, nobody present) and away
-  (reference, see safety minimum below). Hysteresis: margin before
-  acting/stopping.
-- **Anti short-cycling**: minimum seconds the actuator must stay on/off
-  before it can switch again.
-- **Presence**: `person.*`/`device_tracker.*`/`binary_sensor.*` entities —
-  if any is "home"/"on", the zone counts as occupied RIGHT NOW (future
-  presence is never predicted, that would be a black box). With "presence
-  can override the schedule" on: someone home bumps to comfort even if
-  the schedule says otherwise; nobody home drops to eco even if the
-  schedule says comfort (the latter only in "savings" priority).
-- **Schedule**: "comfort" windows per weekday. Outside them, the zone is
-  in "eco". With no window declared, the zone stays in "eco" all day
-  (only acting for the safety minimum).
+**Step 3 — Actuator**: heating and cooling EACH have their own
+independent actuator:
 
-## 4. Safety protection
+- *Switch*: the integration turns a `switch.*` on/off with hysteresis and
+  anti short-cycling (minimum on/off time).
+- *climate.\**: delegates to an existing `climate.*` entity (a
+  thermostatic valve, an air conditioner with its own electronics...). It
+  gets sent its correct mode ("heat"/"cool"/"off") and the target
+  temperature.
 
-Regardless of schedule or presence, a heating zone never lets the
-temperature drop more than 3°C below its "away" level (frost protection),
-and a cooling zone never lets it rise more than 3°C above (heat-stroke
-protection). Not configurable on purpose — it's the last safety net.
+If your setup has a radiator (switch, heat only) and an air conditioner
+(climate.\*, cool only), declare each in its own field — the integration
+never activates both at once. If you have a single reversible unit (heat
+pump AC), put the SAME `climate.*` entity in both the heating and cooling
+fields: it's auto-detected and sent a single command with whichever mode
+is correct for the season, never two commands stepping on each other.
 
-## 5. Learned thermal inertia
+**Step 4 — Temperatures**: comfort, eco, away, hysteresis, min/max
+limits, minimum on/off times (only relevant with a switch actuator).
 
-Only learned for zones with a "switch" actuator (the add-on needs to know
-for certain when it was on). It needs at least a handful of continuous
-20+ minute runs in the same state in Home Assistant's history — usually a
-few days of real use. Until then, conservative defaults are used, and the
-UI says so ("thermal inertia: initial estimate").
+**Step 5 — Schedule, presence and options**: comfort window (start, end,
+days), presence entities, whether presence can override the schedule,
+door/window sensors, manual temperature override duration, history days
+for thermal inertia, plan refresh interval, and simulation mode.
 
-## 6. Manual override from Home Assistant
+## 4. Editing a zone
 
-Changing mode or target temperature from the Home Assistant thermostat
-card (or Google Home/Alexa) puts that zone into "manual override" for 2
-hours (fixed in this version). While it lasts, the engine stops deciding
-for that zone on its own; afterwards it returns to the automatic plan by
-itself. It can be cleared early by hand from the "Current status" tab.
+Settings → Devices & services → Climate Orchestrator → the zone you want
+→ **Configure**. A single form opens with every field pre-filled. Saving
+reloads the whole zone.
 
-## 7. Simulation mode
+## 5. Doors and windows
 
-With "Simulation mode" on (default), the add-on computes the plan and
-publishes it to Home Assistant, but NEVER turns anything on/off or sends
-commands to a real actuator. Review its reasoning and timing for a few
-days before turning it off.
+Any declared door/window sensor that's "open" pauses the zone **instantly**
+(via HA's event bus, no cycle to wait for), regardless of the plan or
+mode. Once closed, it returns to the automatic calculation on its own.
+
+## 6. Mode vs. temperature: two different behaviors
+
+- **Changing the MODE** (off / heat / cool / auto) from the thermostat
+  card, Google Home, Alexa, or a Matter/HomeKit bridge is a choice that
+  **sticks** — it doesn't expire on its own, it's restored across
+  restarts, like any real thermostat. Locking a `heat_cool` zone to "cool
+  only" for summer, for example, stays that way until you change it.
+- **Changing the target TEMPERATURE** is a **temporary** override: it
+  lasts however long you configured (2h by default) and afterwards the
+  zone returns to the automatic plan on its own.
+
+## 7. Safety protection
+
+Regardless of schedule, presence, or manual mode, a heating zone never
+lets the temperature drop more than 3°C below its "away" level (frost
+protection), and a cooling zone never lets it rise more than 3°C above
+(heat-stroke protection). Not configurable on purpose — it's the last
+safety net.
+
+## 8. Learned thermal inertia
+
+Only learned for the side (heat and/or cool) that has a switch actuator —
+the integration knows for certain when it was on. With a delegated
+`climate.*` there's no reliable way to know, so that side keeps
+conservative defaults (flagged `thermal_model_reliable: false` in the
+entity's attributes) until you declare a switch, or forever if your setup
+is entirely delegated `climate.*`.
+
+## 9. Simulation mode
+
+With "Simulation mode" on for a zone (default), the integration computes
+and publishes what it would do (visible in the entity's attributes), but
+never sends a real command to any actuator. Review the `reason` attribute
+for a few days before turning it off.

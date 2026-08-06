@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.1
+
+Corrección sobre la 0.4.0: se me fue la mano quitando `dry`/`fan_only`
+del todo como modos elegibles — no era eso lo pedido. Quedan dos caminos
+bien distintos, tal cual se pidió:
+
+- **A mano**: elegir "Deshumidificar"/"Solo ventilador" desde la tarjeta
+  del termostato SIGUE cambiando el modo de la zona a eso (como
+  cualquier otro modo) y se manda tal cual al equipo que lo soporte.
+- **Reposo inteligente automático** (sin interruptor, ver 0.4.0): sigue
+  coexistiendo solo con el modo más automático de la zona, pero el
+  hvac_mode de la zona NUNCA cambia en este caso — solo la orden que
+  recibe el delegado. Esto no se tocó, ya estaba bien desde la 0.4.0.
+
 ## 0.4.0
 
 Corrección de diseño tras probarlo en real: `dry`/`fan_only` **ya no son

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+
+- La humedad del sensor declarado en la zona (paso Sensores) ahora se
+  publica como atributo nativo `current_humidity` del `climate.*` — antes
+  se leía internamente (reposo inteligente) pero no se mostraba en
+  ningún sitio.
+
 ## 0.3.1
 
 - Corregido: "Configurar" (editar una zona ya creada) se caía con `500

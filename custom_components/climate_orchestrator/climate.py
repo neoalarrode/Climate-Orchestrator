@@ -167,6 +167,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._attr_hvac_mode = self._default_hvac_mode(capability)
         self._attr_hvac_action = HVACAction.IDLE
         self._attr_current_temperature = None
+        self._attr_current_humidity = None  # ver CONF_HUMIDITY_SENSOR / _read_humidity_now — solo informativa, no hay control
         self._attr_target_temperature = None
         self._attr_target_temperature_low = None
         self._attr_target_temperature_high = None
@@ -531,6 +532,8 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
         current_temp = self._read_current_temp()
         self._attr_current_temperature = current_temp
+        humidity = self._read_humidity_now()
+        self._attr_current_humidity = round(humidity) if humidity is not None else None
         if current_temp is None:
             self._attr_available = False
             self.async_write_ha_state()

@@ -257,20 +257,41 @@ tal cual, el delegado podría darse por satisfecho antes o después de que
 el sensor externo — el que de verdad gobierna esta zona — llegue a esa
 temperatura.
 
-Climate Orchestrator lo corrige en cada ciclo: mide la desviación AHORA
-MISMO entre el sensor propio del delegado (su atributo
-`current_temperature`) y el sensor externo de la zona, y se la suma a la
-consigna real antes de mandársela — así el delegado se da por
-satisfecho justo cuando el sensor externo también lo haría, recortada
-siempre al rango que el propio delegado admite (`min_temp`/`max_temp`
-suyos) para no pedirle nunca algo fuera de lo que acepta. Se recalcula
-cada vez (la desviación no es constante: varía con la propia
-calefacción/refrigeración en marcha) y queda visible en el atributo
+Climate Orchestrator lo corrige de forma CONTINUA y EN VIVO — no una vez
+al empezar a calentar/enfriar y ya está: mide la desviación AHORA MISMO
+entre el sensor propio del delegado (su atributo `current_temperature`)
+y el sensor externo de la zona, y se la suma a la consigna real antes de
+mandársela, cada vez que cualquiera de los dos sensores actualiza su
+lectura de verdad (vía el bus de eventos de HA, nunca un sondeo
+periódico — el mismo espíritu reactivo de toda la integración, ver punto
+1) — así el delegado se da por satisfecho justo cuando el sensor externo
+también lo haría, recortada siempre al rango que el propio delegado
+admite (`min_temp`/`max_temp` suyos) para no pedirle nunca algo fuera de
+lo que acepta. Queda visible en el atributo
 `delegate_temperature_deviations` de la entidad de la zona, uno por cada
 `climate.*` delegado. Sin desviación detectable — el delegado no reporta
 su propia `current_temperature`, o el sensor externo no está disponible
 ahora mismo — se manda la consigna real sin tocar, nunca se inventa una
 corrección.
+
+**Al llegar a la consigna, qué hacer con cada delegado (aprendido, no a
+mano)**: por defecto, un `climate.*` delegado NO se apaga al llegar a su
+consigna — se mantiene en su último modo activo (calor o frío) con la
+consigna siempre corregida en vivo, dejando que su propia lógica interna
+se autorregule (menos ciclos de encendido/apagado, y con precisión
+gracias a la corrección continua). Pero eso asume que el delegado de
+verdad sabe pararse solo — si no es así (un equipo sin histéresis interna
+real seguiría calentando/enfriando de más aunque ya debería estar
+satisfecho), Climate Orchestrator lo detecta EN VIVO: si el sensor
+externo sigue desviándose en la dirección equivocada más allá de la
+histéresis normal mientras se mantiene encendido, un par de veces
+seguidas (no un pico puntual), aprende que ESE delegado en concreto
+necesita apagado explícito — y a partir de ahí lo apaga de verdad cada
+vez que llegue a su consigna. Esto es por delegado, no por zona (dos
+equipos en la misma zona pueden comportarse distinto), y persiste tras
+reinicios — visible en el atributo `delegate_needs_explicit_off`. Nada
+de caja negra: es un contador simple de comportamiento observado, no un
+modelo entrenado.
 
 ## 13. Modo vs. preset vs. temperatura
 

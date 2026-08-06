@@ -243,20 +243,39 @@ wall sensor. If it were sent the real setpoint as-is, the delegate could
 consider itself satisfied before or after the external sensor — the one
 that actually governs this zone — reaches that temperature.
 
-Climate Orchestrator corrects this every cycle: it measures the
-deviation RIGHT NOW between the delegate's own sensor (its
-`current_temperature` attribute) and the zone's external sensor, and
-adds it to the real setpoint before sending it — so the delegate
+Climate Orchestrator corrects this CONTINUOUSLY and LIVE — not once when
+heating/cooling starts and left alone: it measures the deviation RIGHT
+NOW between the delegate's own sensor (its `current_temperature`
+attribute) and the zone's external sensor, and adds it to the real
+setpoint before sending it, every time either sensor's real reading
+updates (via HA's event bus, never a periodic poll — the same reactive
+spirit as the whole integration, see point 1) — so the delegate
 considers itself satisfied exactly when the external sensor would too,
 always clamped to the range the delegate itself accepts (its own
 `min_temp`/`max_temp`) so it's never asked for something outside what it
-supports. Recalculated every time (the deviation isn't constant — it
-varies while heating/cooling is actually running) and visible in the
-zone entity's `delegate_temperature_deviations` attribute, one per
-delegated `climate.*`. With no detectable deviation — the delegate
-doesn't report its own `current_temperature`, or the external sensor
-isn't available right now — the real setpoint is sent unmodified, never
-a made-up correction.
+supports. Visible in the zone entity's `delegate_temperature_deviations`
+attribute, one per delegated `climate.*`. With no detectable deviation —
+the delegate doesn't report its own `current_temperature`, or the
+external sensor isn't available right now — the real setpoint is sent
+unmodified, never a made-up correction.
+
+**What to do with each delegate once the setpoint is reached (learned,
+not by hand)**: by default, a delegated `climate.*` is NOT turned off
+once it reaches its setpoint — it's kept in its last active mode (heat
+or cool) with the setpoint always live-corrected, letting its own
+internal logic self-regulate (fewer on/off cycles, and accurate thanks
+to continuous correction). But that assumes the delegate genuinely knows
+how to stop on its own — if it doesn't (a device with no real internal
+hysteresis would keep heating/cooling even though it should already be
+satisfied), Climate Orchestrator detects it LIVE: if the external sensor
+keeps drifting the wrong way past normal hysteresis while the device is
+kept on, a couple of times in a row (not a one-off blip), it learns that
+THIS specific delegate needs an explicit off — and from then on turns it
+off for real every time it reaches its setpoint. This is per delegate,
+not per zone (two devices in the same zone can behave differently), and
+survives restarts — visible in the `delegate_needs_explicit_off`
+attribute. No black box: it's a simple observed-behavior counter, not a
+trained model.
 
 ## 13. Mode vs. preset vs. temperature
 

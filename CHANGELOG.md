@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.0
+
+- **Corrección de desviación confirmada como continua y en vivo**: ya lo
+  era (reacciona al bus de eventos de HA, no a un sondeo) — aclarado en
+  la documentación para que quede explícito, sin añadir ningún
+  temporizador nuevo.
+- **Nuevo: reposo aprendido por delegado**. Al llegar a la consigna, un
+  `climate.*` delegado ya NO se apaga por defecto — se mantiene en su
+  último modo activo con la consigna siempre corregida en vivo, dejando
+  que se autorregule solo (menos ciclos de encendido/apagado). Si un
+  delegado en concreto no sabe pararse solo (sigue calentando/enfriando
+  de más aunque ya debería estar satisfecho), Climate Orchestrator lo
+  aprende en vivo — un contador simple de comportamiento observado, nunca
+  un modelo entrenado — y a partir de ahí lo apaga de verdad. Por
+  delegado, no por zona; persiste tras reinicios. Nuevo atributo
+  `delegate_needs_explicit_off`.
+- Puerta/ventana abierta y apagado a mano siguen siendo apagado real
+  siempre, sin excepción — el reposo aprendido nunca interviene ahí.
+
 ## 0.5.0
 
 **Nuevo: corrección de desviación del sensor en climate.\* delegados.**

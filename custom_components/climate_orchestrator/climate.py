@@ -127,6 +127,12 @@ _ACTION_MAP = {
 #      NUNCA cambia por esto, solo la orden que recibe el delegado.
 _PASSTHROUGH_MODES = {HVACMode.DRY: "dry", HVACMode.FAN_ONLY: "fan_only"}
 
+# Cuantas veces SEGUIDAS hace falta detectar que un climate.* delegado
+# sigue desviandose de su consigna mientras se le mantiene encendido (ver
+# `_check_delegate_overshoot`) antes de aprender que hay que apagarlo de
+# verdad — no un pico puntual del sensor, un comportamiento sostenido.
+OVERSHOOT_STRIKES_THRESHOLD = 2
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     async_add_entities([ClimateOrchestratorZone(hass, entry)])
@@ -202,6 +208,18 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         # extra_state_attributes para poder revisarla.
         self._delegate_deviations: dict[str, float] = {}
 
+        # Ultimo modo/consigna REAL (calor o frio, sin corregir) que se
+        # persiguio de verdad en cada climate.* delegado — lo usa
+        # `_drive_climate_idle` para mantenerlo ahi al llegar a la
+        # consigna, en vez de apagarlo sin mas. Cuantas veces seguidas se
+        # ha detectado que, mantenido asi, se desvia de esa consigna (ver
+        # `_check_delegate_overshoot`) y el conjunto de los que ya se ha
+        # aprendido que NO se autorregulan solos — este ultimo persiste
+        # tras un reinicio (ver async_added_to_hass/extra_state_attributes).
+        self._delegate_last_active: dict[str, tuple[str, float]] = {}
+        self._delegate_overshoot_strikes: dict[str, int] = {}
+        self._delegate_needs_explicit_off: set[str] = set()
+
         # Ultimo modo hvac activo (no "apagado") — lo usa async_turn_on
         # (ver TURN_ON/TURN_OFF en _refresh_hvac_modes) para volver
         # exactamente a donde estaba la zona, no a un generico "Auto": si
@@ -230,6 +248,11 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             # `_compensate_delegate_target`. Vacio si no hay delegados, o si
             # ninguno reporta su propia current_temperature.
             "delegate_temperature_deviations": dict(self._delegate_deviations),
+            # Aprendido en vivo (ver _check_delegate_overshoot): que
+            # climate.* delegados NO se autorregulan solos al llegar a su
+            # consigna y por eso se apagan de verdad, en vez de mantenerlos
+            # en su ultimo modo activo. Persiste tras reinicios.
+            "delegate_needs_explicit_off": sorted(self._delegate_needs_explicit_off),
         }
 
     # ---------------------------------------------------- capacidad real ----
@@ -405,6 +428,16 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                             self._manual_cool = single_f
                     except (TypeError, ValueError):
                         pass
+
+            learned_off = last_state.attributes.get("delegate_needs_explicit_off")
+            if isinstance(learned_off, (list, tuple)):
+                # Restaura lo aprendido en vivo sobre que climate.*
+                # delegados no se autorregulan solos (ver
+                # _check_delegate_overshoot) — solo para los que sigan
+                # declarados ahora mismo, por si la lista de actuadores
+                # cambio mientras tanto.
+                declared = set(self.zone.get(CONF_CLIMATE_ENTITIES) or [])
+                self._delegate_needs_explicit_off = {e for e in learned_off if e in declared}
 
         watched = [e for e in [
             self.zone.get(CONF_CURRENT_TEMP_SENSOR),
@@ -670,9 +703,19 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                     action = smart_action
                     self._reason += f" — {smart_reason}"
 
+        # Solo el tramo normal (Auto/calor/frio decidiendo solo, NUNCA
+        # apagado a mano ni puerta/ventana ni un modo dry/fan_only fijado
+        # a mano) puede dejar un climate.* delegado "en reposo mantenido"
+        # en vez de apagarlo de verdad al llegar a la consigna — ver
+        # `_drive_climate_idle`. Los demas casos siguen siendo apagado
+        # real, sin ambiguedad.
+        climate_idle_keep = action == "idle" and not force_off and self._attr_hvac_mode not in (HVACMode.OFF, *_PASSTHROUGH_MODES)
+
         self._update_target_attrs(heat_target, cool_target)
         target_for_actuator = heat_target if action == "heat" else cool_target if action == "cool" else (heat_target or cool_target)
-        real_action = await self._async_execute(action, target_for_actuator, capability, current_temp, force_off=force_off)
+        real_action = await self._async_execute(
+            action, target_for_actuator, capability, current_temp, deadband, climate_idle_keep, force_off=force_off
+        )
         # HVACAction.OFF (apagado de verdad, el modo elegido es "apagado")
         # es DISTINTO de HVACAction.IDLE (encendida, dentro de margen, sin
         # nada que hacer ahora mismo) — HA y cualquier puente Matter/
@@ -695,7 +738,8 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     # ------------------------------------------------------ actuadores ----
 
     async def _async_execute(
-        self, action: str, target_temp: float | None, capability: str, current_temp: float | None, force_off: bool = False
+        self, action: str, target_temp: float | None, capability: str, current_temp: float | None,
+        deadband: float, climate_idle_keep: bool, force_off: bool = False,
     ) -> str:
         """Ejecuta la decision sobre TODOS los actuadores declarados —
         tantos como se quiera de cada tipo (ver const.py). `action` ya
@@ -711,6 +755,12 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         `_drive_switch`) — solo lo usa el aviso de puerta/ventana abierta,
         que es urgente de verdad; un "idle" normal (dentro de margen) sigue
         respetando el tiempo minimo encendido.
+
+        `climate_idle_keep`: solo cuando la zona llega a su consigna
+        decidiendo SOLA en Auto/calor/frio (nunca apagado a mano, puerta/
+        ventana, o un modo dry/fan_only fijado a mano) — cada climate.*
+        delegado pasa por `_drive_climate_idle` en vez del apagado directo,
+        ver ahi el criterio real (mantener vs apagar, aprendido).
 
         Los switches SOLO entienden calor/frio (un switch no tiene forma
         de ventilar o deshumidificar) — con "dry"/"fan_only" simplemente
@@ -738,7 +788,10 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                     real_cool = True
 
         for entity_id in self.zone.get(CONF_CLIMATE_ENTITIES) or []:
-            result = await self._drive_climate_actuator(entity_id, action, target_temp, current_temp, simulate)
+            if climate_idle_keep:
+                result = await self._drive_climate_idle(entity_id, current_temp, deadband, simulate)
+            else:
+                result = await self._drive_climate_actuator(entity_id, action, target_temp, current_temp, simulate)
             if result == "heat":
                 real_heat = True
             elif result == "cool":
@@ -773,6 +826,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         can_do = action in ("heat", "cool", "dry", "fan_only") and action in supported
 
         if can_do:
+            if action in ("heat", "cool"):
+                # Se recuerda la consigna REAL (sin corregir) que se
+                # persigue de verdad — es lo que usa `_drive_climate_idle`
+                # mas tarde para mantener este delegado en su ultimo modo
+                # activo al llegar a la consigna, y para detectar si se
+                # desvia (ver `_check_delegate_overshoot`). Se guarda
+                # SIEMPRE, incluso en simulacion, para que el reposo
+                # aprendido tambien se pueda probar sin tocar equipos
+                # reales.
+                self._delegate_last_active[entity_id] = (action, target_temp)
+                self._delegate_overshoot_strikes[entity_id] = 0
             if not simulate:
                 await self.hass.services.async_call(
                     "climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": action}, blocking=False)
@@ -780,7 +844,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                     compensated = self._compensate_delegate_target(entity_id, state, target_temp, current_temp)
                     await self.hass.services.async_call(
                         "climate", "set_temperature", {"entity_id": entity_id, "temperature": compensated}, blocking=False)
-            else:
+            elif action in ("heat", "cool"):
                 # En simulacion no se manda nada real, pero se calcula y
                 # guarda igual la desviacion — asi el atributo de
                 # diagnostico es fiable desde el primer dia, sin esperar a
@@ -791,6 +855,87 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         if not simulate and "off" in supported and state is not None and state.state != "off":
             await self.hass.services.async_call("climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": "off"}, blocking=False)
         return "idle"
+
+    async def _drive_climate_idle(self, entity_id: str, current_temp: float | None, deadband: float, simulate: bool) -> str:
+        """Que hacer con ESTE climate.* delegado en concreto al llegar a
+        la consigna decidiendo solo en Auto/calor/frio (ver
+        `climate_idle_keep` en `_async_decide_and_act`) — no todos se
+        tratan igual:
+
+        Por defecto se MANTIENE en su ultimo modo activo (heat/cool, ver
+        `_delegate_last_active`) con la consigna SIEMPRE corregida en vivo
+        (`_compensate_delegate_target`, reactiva a cada cambio real de
+        sensor — nunca por sondeo) — asi el propio delegado se autorregula
+        con su logica interna, sin ciclos de encendido/apagado de mas, y
+        con precision gracias a la correccion continua.
+
+        Pero eso asume que el delegado de verdad SABE pararse solo. Si no
+        es asi — un equipo sin histéresis interna real seguiria
+        calentando/enfriando de mas aunque ya deberia estar satisfecho —
+        se aprende en vivo (ver `_check_delegate_overshoot`, nada de caja
+        negra: un contador de veces que el sensor EXTERNO sigue
+        desviandose en la direccion equivocada mientras se mantiene
+        encendido) y, a partir de ahi, ese delegado en concreto se apaga
+        de verdad cada vez que llegue a su consigna — persistido tras
+        reinicios (ver `delegate_needs_explicit_off` en
+        extra_state_attributes / async_added_to_hass)."""
+        state = self.hass.states.get(entity_id)
+        supported = list((state.attributes.get("hvac_modes") if state else None) or [])
+        last = self._delegate_last_active.get(entity_id)
+
+        if entity_id not in self._delegate_needs_explicit_off and last is not None:
+            last_mode, last_target = last
+            if last_mode in supported:
+                self._check_delegate_overshoot(entity_id, last_mode, last_target, current_temp, deadband)
+
+        if entity_id in self._delegate_needs_explicit_off or last is None or last[0] not in supported:
+            if not simulate and "off" in supported and state is not None and state.state != "off":
+                await self.hass.services.async_call("climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": "off"}, blocking=False)
+            return "idle"
+
+        last_mode, last_target = last
+        if not simulate:
+            compensated = self._compensate_delegate_target(entity_id, state, last_target, current_temp)
+            if state is None or state.state != last_mode:
+                await self.hass.services.async_call(
+                    "climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": last_mode}, blocking=False)
+            await self.hass.services.async_call(
+                "climate", "set_temperature", {"entity_id": entity_id, "temperature": compensated}, blocking=False)
+        else:
+            self._compensate_delegate_target(entity_id, state, last_target, current_temp)
+        return "idle"
+
+    def _check_delegate_overshoot(
+        self, entity_id: str, last_mode: str, last_target: float, current_temp: float | None, deadband: float
+    ) -> None:
+        """Aprendizaje simple y explicable — nada de caja negra ni de
+        modelo entrenado: mientras se MANTIENE este delegado en su ultimo
+        modo activo sin apagarlo (ver `_drive_climate_idle`), si el sensor
+        EXTERNO (el que de verdad gobierna la zona) sigue moviendose en la
+        direccion EQUIVOCADA mas alla de la histéresis normal —
+        sobre-temperatura en calor, infra-temperatura en frio—, es que
+        este equipo en concreto no sabe pararse solo (no tiene, o esta
+        integracion no ve, su propia histéresis interna). Un par de veces
+        seguidas (no un pico puntual del sensor) y se aprende a apagarlo
+        de verdad de aqui en adelante — se persiste tras reinicios."""
+        if current_temp is None:
+            return
+        overshoot = (
+            (last_mode == "heat" and current_temp > last_target + deadband) or
+            (last_mode == "cool" and current_temp < last_target - deadband)
+        )
+        if not overshoot:
+            self._delegate_overshoot_strikes[entity_id] = 0
+            return
+        strikes = self._delegate_overshoot_strikes.get(entity_id, 0) + 1
+        self._delegate_overshoot_strikes[entity_id] = strikes
+        if strikes >= OVERSHOOT_STRIKES_THRESHOLD:
+            self._delegate_needs_explicit_off.add(entity_id)
+            _LOGGER.info(
+                "%s: %s se mantenia encendido mas alla de su consigna repetidas veces — "
+                "a partir de ahora se apaga de verdad al llegar a la consigna",
+                self.zone.get("name"), entity_id,
+            )
 
     def _compensate_delegate_target(
         self, entity_id: str, state, target_temp: float, current_temp: float | None

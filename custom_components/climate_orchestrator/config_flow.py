@@ -247,7 +247,7 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
-        return ClimateOrchestratorOptionsFlow(config_entry)
+        return ClimateOrchestratorOptionsFlow()
 
 
 class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
@@ -258,10 +258,14 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
     Los presets se editan como el mismo texto libre del asistente inicial
     (no un desplegable ya validado) — es una edicion, no un alta guiada, y
     asi no hay problema de "el desplegable ya no coincide con lo que
-    acabas de escribir" a mitad de guardar."""
+    acabas de escribir" a mitad de guardar.
 
-    def __init__(self, config_entry) -> None:
-        self.config_entry = config_entry
+    OJO: nada de `__init__(self, config_entry)` fijando `self.config_entry`
+    a mano — las versiones recientes de HA ya gestionan `config_entry`
+    ellas solas como propiedad de la clase base; sobreescribirla a mano
+    rompe el flujo entero con un 500 en cuanto se abre "Configurar" (asi
+    se detecto: "no se pudo cargar el flujo de configuracion"). Se usa tal
+    cual, sin constructor propio."""
 
     async def async_step_init(self, user_input=None):
         current = {**self.config_entry.data}

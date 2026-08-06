@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+- Corregido: "Configurar" (editar una zona ya creada) se caía con `500
+  Internal Server Error` / "no se pudo cargar el flujo de configuración".
+  Causa: `ClimateOrchestratorOptionsFlow` fijaba `self.config_entry` a
+  mano en su propio `__init__`, un patrón que versiones recientes de Home
+  Assistant ya no permiten (esa clase gestiona `config_entry` ella sola,
+  como propiedad). Quitado el constructor propio — se usa tal cual.
+  Si además tenías el aviso de puerta/ventana sin cortar de verdad, esto
+  puede ser la causa real: sin poder abrir "Configurar" no había forma de
+  comprobar ni desactivar "Modo simulación".
+
 ## 0.3.0
 
 - **Reconocimiento de modos hvac más allá de calor/frío**: hasta ahora

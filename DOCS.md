@@ -181,6 +181,24 @@ invierno), sigues pudiendo elegir esos modos por separado. Una zona de un
 solo sentido (solo calor, o solo frío) sigue ofreciendo únicamente ese
 modo — "Auto" no tendría sentido ahí.
 
+El mapeo de modos hvac de Home Assistant al `SystemMode` del clúster
+Thermostat de Matter (el que usa cualquier puente, incluido
+`home-assistant-matter-hub`) es directo y no necesita ninguna traducción
+de nuestra parte: `off`→Off, `heat`→Heat, `cool`→Cool,
+`heat_cool`→**Auto**, `dry`→Dry, `fan_only`→FanOnly — exactamente lo que
+esta zona expone. Además, siempre que haya algo más que "apagado" que
+ofrecer, la zona declara encendido/apagado como un interruptor real (no
+solo un modo más en un desplegable) — esto es lo que hace que el botón de
+encendido/apagado aparezca en cualquier puente Matter/HomeKit/Google Home
+en vez de quedar oculto.
+
+**Aviso honesto**: aunque Matter transporta `dry`/`fan_only` sin
+problema, Apple Home, Google Home y Alexa suelen limitar lo que
+MUESTRAN de un termostato a Calor/Frío/Auto/Apagado — puede que no
+aparezcan como botón en esas apps concretas aunque el dato viaje bien.
+Desde la propia Home Assistant (tarjeta del termostato, Lovelace) sí se
+ven siempre los cuatro.
+
 ## 10. Modos `dry`/`fan_only` y reposo inteligente
 
 Un `climate.*` delegado puede declarar en sus propios `hvac_modes` algo

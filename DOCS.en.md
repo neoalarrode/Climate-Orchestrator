@@ -171,6 +171,23 @@ those modes separately. A single-direction zone (heat only, or cool
 only) still exposes just that one mode — "Auto" wouldn't make sense
 there.
 
+The mapping from Home Assistant's hvac modes to the Matter Thermostat
+cluster's `SystemMode` (the one any bridge uses, including
+`home-assistant-matter-hub`) is direct and needs no translation on our
+part: `off`→Off, `heat`→Heat, `cool`→Cool, `heat_cool`→**Auto**,
+`dry`→Dry, `fan_only`→FanOnly — exactly what this zone exposes. Also,
+whenever there's more than just "off" to offer, the zone declares
+on/off as a real switch (not just one more mode buried in a dropdown) —
+this is what makes the power button show up on any Matter/HomeKit/Google
+Home bridge instead of staying hidden.
+
+**Honest caveat**: even though Matter carries `dry`/`fan_only` fine,
+Apple Home, Google Home and Alexa typically limit what they SHOW for a
+thermostat to Heat/Cool/Auto/Off — they may not surface those as a
+button in those specific apps even though the data travels correctly.
+From Home Assistant itself (thermostat card, Lovelace) all four are
+always visible.
+
 ## 10. `dry`/`fan_only` modes and smart idle
 
 A delegated `climate.*` can declare more than heat/cool in its own

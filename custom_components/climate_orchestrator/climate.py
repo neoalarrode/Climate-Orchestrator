@@ -165,7 +165,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._attr_min_temp = float(self.zone.get(CONF_MIN_TEMP, DEFAULT_MIN_TEMP))
         self._attr_max_temp = float(self.zone.get(CONF_MAX_TEMP, DEFAULT_MAX_TEMP))
         self._attr_hvac_mode = self._default_hvac_mode(capability)
-        self._attr_hvac_action = HVACAction.IDLE
+        self._attr_hvac_action = HVACAction.OFF if self._attr_hvac_mode == HVACMode.OFF else HVACAction.IDLE
         self._attr_current_temperature = None
         self._attr_current_humidity = None  # ver CONF_HUMIDITY_SENSOR / _read_humidity_now — solo informativa, no hay control
         self._attr_target_temperature = None
@@ -188,6 +188,15 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._manual_cool: float | None = None
 
         self._switch_last_change: dict[str, tuple[str, object]] = {}
+
+        # Ultimo modo hvac activo (no "apagado") — lo usa async_turn_on
+        # (ver TURN_ON/TURN_OFF en _refresh_hvac_modes) para volver
+        # exactamente a donde estaba la zona, no a un generico "Auto": si
+        # se habia bloqueado a mano a "solo calor", encender debe volver a
+        # "solo calor", no saltar a otra cosa.
+        self._last_active_hvac_mode: HVACMode | None = (
+            self._attr_hvac_mode if self._attr_hvac_mode != HVACMode.OFF else None
+        )
 
     # ---------------------------------------------------------- estado ----
 
@@ -276,6 +285,16 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             features |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
         if ("heat" in capability) or ("cool" in capability):
             features |= ClimateEntityFeature.TARGET_TEMPERATURE
+        if len(modes) > 1:
+            # Hay algo mas que "apagado" que ofrecer — declarar TURN_ON/
+            # TURN_OFF es lo que hace que HA (y cualquier puente Matter/
+            # HomeKit/Google Home montado encima) trate el apagado como un
+            # boton de encendido/apagado de verdad, no solo un hvac_mode
+            # mas escondido en un desplegable (ver async_turn_on/off, mas
+            # abajo). Sin esto una zona sigue funcionando, pero HA avisa de
+            # que el comportamiento esta obsoleto y algunos puentes no
+            # exponen el interruptor de encendido.
+            features |= ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
         self._attr_supported_features = features
         return capability
 
@@ -339,6 +358,8 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             self._attr_hvac_mode = HVACMode(last_state.state)
         else:
             self._attr_hvac_mode = self._default_hvac_mode(capability)
+        if self._attr_hvac_mode != HVACMode.OFF:
+            self._last_active_hvac_mode = self._attr_hvac_mode
 
         if last_state is not None:
             last_preset = last_state.attributes.get("preset_mode")
@@ -618,7 +639,13 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._update_target_attrs(heat_target, cool_target)
         target_for_actuator = heat_target if action == "heat" else cool_target if action == "cool" else (heat_target or cool_target)
         real_action = await self._async_execute(action, target_for_actuator, capability, force_off=force_off)
-        self._attr_hvac_action = _ACTION_MAP.get(real_action, HVACAction.IDLE)
+        # HVACAction.OFF (apagado de verdad, el modo elegido es "apagado")
+        # es DISTINTO de HVACAction.IDLE (encendida, dentro de margen, sin
+        # nada que hacer ahora mismo) — HA y cualquier puente Matter/
+        # HomeKit distinguen los dos; confundirlos hace que un termostato
+        # "apagado" se vea como "en espera" en la UI.
+        self._attr_hvac_action = HVACAction.OFF if self._attr_hvac_mode == HVACMode.OFF \
+            else _ACTION_MAP.get(real_action, HVACAction.IDLE)
         self.async_write_ha_state()
 
     def _update_target_attrs(self, heat_target: float | None, cool_target: float | None) -> None:
@@ -787,10 +814,31 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         self._attr_hvac_mode = hvac_mode
+        if hvac_mode != HVACMode.OFF:
+            self._last_active_hvac_mode = hvac_mode
         # Un cambio de modo puede cambiar la capacidad EFECTIVA (p.ej. de
         # "auto" a "solo frio", ver _effective_capability) — recalcular ya
         # mismo la decision, no esperar al proximo evento reactivo.
         await self._async_decide_and_act()
+
+    async def async_turn_off(self) -> None:
+        await self.async_set_hvac_mode(HVACMode.OFF)
+
+    async def async_turn_on(self) -> None:
+        """El interruptor de encendido (ver ClimateEntityFeature.TURN_ON/
+        TURN_OFF en `_refresh_hvac_modes` — necesario para que HA, y
+        cualquier puente Matter/HomeKit montado encima, trate el apagado
+        como un boton real). Vuelve al ultimo modo activo que tenia la
+        zona, no a un generico "Auto": si estaba bloqueada a mano a "solo
+        calor", encender debe devolverla a "solo calor"."""
+        target = self._last_active_hvac_mode
+        if target is None or target not in (self._attr_hvac_modes or []):
+            # La capacidad pudo cambiar mientras tanto (un actuador se
+            # quito/añadio) y ese modo ya no es valido — cae al modo por
+            # defecto actual en vez de mandar algo que la zona ya no puede
+            # cumplir.
+            target = self._default_hvac_mode(self._last_full_capability)
+        await self.async_set_hvac_mode(target)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Fijar CUALQUIER preset a mano (incluido "Manual", o

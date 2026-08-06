@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.3
+
+Revisada la especificación real del clúster Thermostat de Matter (y del
+mapeo que hace `home-assistant-matter-hub` de entidades `climate.*` de HA
+a Matter) para confirmar y terminar de estandarizar los modos hvac:
+
+- Confirmado: el mapeo `off/heat/cool/heat_cool→Auto/dry/fan_only` ya
+  coincidía exactamente con el `SystemMode` estándar de Matter — sin
+  cambios ahí.
+- **Nuevo**: cuando la zona ofrece algo más que "apagado", se declara
+  `TURN_ON`/`TURN_OFF` — así HA (y cualquier puente Matter/HomeKit/Google
+  Home) trata el apagado como un interruptor real, no un modo más
+  escondido en un desplegable. Encender vuelve al último modo que tenía
+  la zona (si estaba bloqueada a "solo calor", sigue en "solo calor" — no
+  salta a "Auto").
+- Corregido: `hvac_action` decía "idle" (en espera) incluso con la zona
+  apagada de verdad — ahora distingue "apagado" (`off`) de "encendida,
+  dentro de margen, sin nada que hacer ahora mismo" (`idle`), como
+  esperan HA y cualquier puente Matter/HomeKit.
+- Aviso añadido a la documentación: Apple Home/Google Home/Alexa suelen
+  limitar lo que MUESTRAN de un termostato a Calor/Frío/Auto/Apagado —
+  puede que `dry`/`fan_only` no aparezcan como botón ahí aunque el dato
+  viaje bien por Matter.
+
 ## 0.3.2
 
 - La humedad del sensor declarado en la zona (paso Sensores) ahora se

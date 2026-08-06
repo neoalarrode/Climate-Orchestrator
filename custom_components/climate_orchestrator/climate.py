@@ -53,7 +53,18 @@ EL SOLO en vez de apagar del todo cuando la zona ya esta dentro de margen
 usuario/Matter/HomeKit aunque por debajo el equipo este ventilando o
 deshumidificando un rato. En ambos casos, si el delegado no soporta lo
 que le toca, se apaga sin mas, nunca se fuerza nada que no sepa hacer.
-"""
+
+Humidificacion (ver CONF_HUMIDIFIER_ENTITIES en const.py) es otra
+funcion PARALELA, esta vez NATIVA del propio termostato de la zona
+(ClimateEntityFeature.TARGET_HUMIDITY — ajustable desde la misma tarjeta,
+igual que la temperatura): activa siempre que la zona no este apagada ni
+en pausa, sea cual sea el hvac_mode concreto (Auto, calor, frio...) —
+"integrada en el funcionamiento automatico" en ese sentido, no exclusiva
+de un unico modo. Consigna UNICA por zona (no por preset, a diferencia de
+calor/frio) — ver `_drive_humidifiers`, que enciende cada humidifier.*
+delegado con esa consigna y confia en su propia logica interna para
+pararse solo, el mismo espiritu que el reposo mantenido de los climate.*
+delegados."""
 
 from __future__ import annotations
 
@@ -62,7 +73,7 @@ from datetime import timedelta
 
 from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature, HVACAction, HVACMode
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
+from homeassistant.const import ATTR_HUMIDITY, ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.components.climate.const import ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -83,6 +94,7 @@ from .const import (
     CONF_FORECAST_REFRESH_MINUTES,
     CONF_HEAT_SWITCHES,
     CONF_HISTORY_DAYS_FOR_INERTIA,
+    CONF_HUMIDIFIER_ENTITIES,
     CONF_HUMIDITY_SENSOR,
     CONF_MAX_TEMP,
     CONF_MIN_OFF_SECONDS,
@@ -95,16 +107,20 @@ from .const import (
     CONF_PRESETS_TEXT,
     CONF_PRIORITY,
     CONF_SIMULATE,
+    CONF_TARGET_HUMIDITY,
     CONF_WEATHER_ENTITY,
     DEFAULT_DEADBAND,
     DEFAULT_DRY_HUMIDITY_THRESHOLD,
     DEFAULT_FORECAST_REFRESH_MINUTES,
     DEFAULT_HISTORY_DAYS_FOR_INERTIA,
+    DEFAULT_MAX_HUMIDITY,
     DEFAULT_MAX_TEMP,
+    DEFAULT_MIN_HUMIDITY,
     DEFAULT_MIN_OFF_SECONDS,
     DEFAULT_MIN_ON_SECONDS,
     DEFAULT_MIN_TEMP,
     DEFAULT_OUTDOOR_HORIZON_HOURS,
+    DEFAULT_TARGET_HUMIDITY,
     DOMAIN,
 )
 
@@ -181,6 +197,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._attr_hvac_action = HVACAction.OFF if self._attr_hvac_mode == HVACMode.OFF else HVACAction.IDLE
         self._attr_current_temperature = None
         self._attr_current_humidity = None  # ver CONF_HUMIDITY_SENSOR / _read_humidity_now — solo informativa, no hay control
+
+        # Humidificacion (ver CONF_HUMIDIFIER_ENTITIES en const.py): consigna
+        # UNICA por zona (no por preset), seguida por _drive_humidifiers
+        # mientras la zona no este apagada ni en pausa. Ajustable al vuelo
+        # desde la propia tarjeta (async_set_humidity), restaurada tras un
+        # reinicio igual que la temperatura — el valor del config solo
+        # siembra el arranque, igual que ocurre con los presets.
+        self._attr_min_humidity = DEFAULT_MIN_HUMIDITY
+        self._attr_max_humidity = DEFAULT_MAX_HUMIDITY
+        self._attr_target_humidity = float(self.zone.get(CONF_TARGET_HUMIDITY, DEFAULT_TARGET_HUMIDITY))
+
         self._attr_target_temperature = None
         self._attr_target_temperature_low = None
         self._attr_target_temperature_high = None
@@ -287,6 +314,15 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             for mode in ("heat", "cool", *_PASSTHROUGH_MODES.values()):
                 if mode in supported:
                     capability.add(mode)
+        if self.zone.get(CONF_HUMIDIFIER_ENTITIES):
+            # A diferencia de dry/fan_only, humidificar no es un hvac_mode
+            # — es una funcion PARALELA (ClimateEntityFeature.TARGET_
+            # HUMIDITY) que convive con cualquier hvac_mode activo, ver
+            # `_refresh_hvac_modes`/`_drive_humidifiers`. Basta con que
+            # haya al menos un humidifier.* declarado, no hace falta
+            # comprobar nada suyo en vivo (un humidifier.* siempre sabe
+            # humidificar, es lo unico que hace).
+            capability.add("humidify")
         return capability
 
     def _refresh_hvac_modes(self) -> set[str]:
@@ -335,6 +371,12 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             features |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
         if ("heat" in capability) or ("cool" in capability):
             features |= ClimateEntityFeature.TARGET_TEMPERATURE
+        if "humidify" in capability:
+            # Funcion NATIVA del termostato (no una entidad humidifier.*
+            # aparte sin relacion): target_humidity ajustable desde la
+            # misma tarjeta, igual que la temperatura — ver
+            # `_drive_humidifiers`/`async_set_humidity`.
+            features |= ClimateEntityFeature.TARGET_HUMIDITY
         if len(modes) > 1:
             # Hay algo mas que "apagado" que ofrecer — declarar TURN_ON/
             # TURN_OFF es lo que hace que HA (y cualquier puente Matter/
@@ -437,6 +479,16 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                     except (TypeError, ValueError):
                         pass
 
+            target_humidity = last_state.attributes.get(ATTR_HUMIDITY)
+            if target_humidity is not None:
+                # Consigna de humedad ajustada al vuelo desde la tarjeta
+                # (async_set_humidity) — persistente, igual que la
+                # temperatura; el valor del config solo siembra el arranque.
+                try:
+                    self._attr_target_humidity = float(target_humidity)
+                except (TypeError, ValueError):
+                    pass
+
             learned_off = last_state.attributes.get("delegate_needs_explicit_off")
             if isinstance(learned_off, (list, tuple)):
                 # Restaura lo aprendido en vivo sobre que climate.*
@@ -450,9 +502,11 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         watched = [e for e in [
             self.zone.get(CONF_CURRENT_TEMP_SENSOR),
             self.zone.get(CONF_OUTDOOR_TEMP_SENSOR),
+            self.zone.get(CONF_HUMIDITY_SENSOR),
             *(self.zone.get(CONF_PRESENCE_ENTITIES) or []),
             *(self.zone.get(CONF_DOOR_WINDOW_ENTITIES) or []),
             *(self.zone.get(CONF_CLIMATE_ENTITIES) or []),
+            *(self.zone.get(CONF_HUMIDIFIER_ENTITIES) or []),
         ] if e]
         if watched:
             self.async_on_remove(async_track_state_change_event(self.hass, watched, self._handle_reactive_event))
@@ -731,6 +785,15 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         # "apagado" se vea como "en espera" en la UI.
         self._attr_hvac_action = HVACAction.OFF if self._attr_hvac_mode == HVACMode.OFF \
             else _ACTION_MAP.get(real_action, HVACAction.IDLE)
+
+        # Humidificacion: funcion PARALELA a calor/frio/dry/fan_only, no un
+        # hvac_mode mas — activa siempre que la zona no este apagada ni en
+        # pausa por puerta/ventana, sea cual sea el hvac_mode concreto ("
+        # integrada en el funcionamiento automatico", ver CONF_HUMIDIFIER_
+        # ENTITIES en const.py).
+        humidify_active = self._attr_hvac_mode != HVACMode.OFF and not force_off
+        await self._drive_humidifiers(humidify_active)
+
         self.async_write_ha_state()
 
     def _update_target_attrs(self, heat_target: float | None, cool_target: float | None) -> None:
@@ -1023,6 +1086,31 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._switch_last_change[entity_id] = ("on" if desired_on else "off", now)
         return desired_on
 
+    async def _drive_humidifiers(self, active: bool) -> None:
+        """Cada humidifier.* delegado (ver CONF_HUMIDIFIER_ENTITIES) se
+        gobierna igual que un climate.* dejado "en reposo mantenido" (ver
+        `_drive_climate_idle`, mismo espiritu): se enciende con la
+        consigna de la zona (`_attr_target_humidity`) y se deja que su
+        propia logica interna decida cuando humidificar de verdad — no
+        hace falta reimplementar aqui la histeresis, el propio
+        humidifier.* ya sabe pararse solo al llegar a su consigna, igual
+        que cualquier humidificador domestico normal. Se apaga solo
+        cuando la zona esta genuinamente apagada o en pausa por puerta/
+        ventana (`active=False`, ver `_async_decide_and_act`) — nunca por
+        una decision de calor/frio, es una funcion paralela."""
+        simulate = bool(self.zone.get(CONF_SIMULATE, True))
+        for entity_id in self.zone.get(CONF_HUMIDIFIER_ENTITIES) or []:
+            state = self.hass.states.get(entity_id)
+            if simulate:
+                continue
+            if active:
+                if state is None or state.state != "on":
+                    await self.hass.services.async_call("humidifier", "turn_on", {"entity_id": entity_id}, blocking=False)
+                await self.hass.services.async_call(
+                    "humidifier", "set_humidity", {"entity_id": entity_id, "humidity": self._attr_target_humidity}, blocking=False)
+            elif state is not None and state.state != "off":
+                await self.hass.services.async_call("humidifier", "turn_off", {"entity_id": entity_id}, blocking=False)
+
     # --------------------------------------------------------- comandos ----
 
     async def async_set_temperature(self, **kwargs) -> None:
@@ -1059,6 +1147,14 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             return
 
         self._attr_preset_mode = presets_module.PRESET_MANUAL
+        await self._async_decide_and_act()
+
+    async def async_set_humidity(self, humidity: int) -> None:
+        """Consigna de humedad UNICA por zona (no por preset, a diferencia
+        de la temperatura) — ajustarla aqui es tan persistente como
+        cambiarla en "Configurar", restaurada tras un reinicio igual que
+        el resto."""
+        self._attr_target_humidity = float(humidity)
         await self._async_decide_and_act()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:

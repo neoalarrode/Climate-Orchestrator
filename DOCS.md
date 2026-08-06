@@ -61,6 +61,8 @@ verdad de cada uno (puedes combinar los tres tipos en la misma zona):
   sirve, así que estos sí van en su lista correspondiente. La integración
   los enciende/apaga con histéresis y anti-ciclado (tiempo mínimo
   encendido/apagado).
+- **humidifier.\* delegados** (opcional): entidades `humidifier.*` ya
+  existentes en las que delegar la humidificación — ver punto 13.
 
 La capacidad final de la zona (solo calor / solo frío / ambos) —y por
 tanto qué modos expone Home Assistant y cualquier puente Matter/HomeKit—
@@ -87,7 +89,8 @@ SIEMPRE se respetan**, sea cual sea el preset activo, la presencia o el
 modo manual — el "nunca por debajo de 12°C en invierno aunque no haya
 nadie, nunca por encima de 30°C en verano" configurable por zona. También
 los tiempos mínimos de encendido/apagado (solo relevantes con actuador
-tipo switch).
+tipo switch) y la consigna de humedad objetivo (solo si declaraste
+`humidifier_entities` en el paso 3, ver punto 13).
 
 **Paso 7 — Presencia, puertas/ventanas y opciones**: entidades de
 presencia, sensores de puerta/ventana, días de histórico para la inercia térmica, frecuencia de
@@ -293,7 +296,37 @@ reinicios — visible en el atributo `delegate_needs_explicit_off`. Nada
 de caja negra: es un contador simple de comportamiento observado, no un
 modelo entrenado.
 
-## 13. Modo vs. preset vs. temperatura
+## 13. Humidificación
+
+Además de calor/frío/dry/fan_only, una zona puede delegar en entidades
+`humidifier.*` ya existentes (paso 3 del asistente, opcional) para
+humidificar de verdad. A diferencia de todo lo anterior, esto NO es un
+modo más: es una función **nativa y paralela** del propio termostato de
+la zona — `ClimateEntityFeature.TARGET_HUMIDITY`, con su propio
+`target_humidity`/`current_humidity` ajustables desde la misma tarjeta,
+igual que la temperatura — que convive con cualquier hvac_mode activo
+(Auto, calor, frío...). "Integrada en el funcionamiento automático" en
+ese sentido: no hace falta estar en un modo concreto para que actúe, solo
+que la zona no esté apagada ni en pausa por puerta/ventana.
+
+- **Consigna única por zona** (no por preset, a diferencia de calor/
+  frío): un solo valor de humedad objetivo (45% por defecto),
+  configurable en "Configurar" o ajustable al vuelo desde la propia
+  tarjeta del termostato — se restaura tras un reinicio igual que
+  cualquier otro ajuste hecho así.
+- **Cómo se controla**: cuando la zona está activa, cada `humidifier.*`
+  delegado se enciende con esa consigna y se deja que su propia lógica
+  interna decida cuándo humidificar de verdad — el mismo espíritu que el
+  reposo mantenido de los `climate.*` delegados (ver punto 12): no hace
+  falta reimplementar la histéresis, un humidificador doméstico normal ya
+  sabe pararse solo al llegar a su consigna. Se apaga solo cuando la zona
+  está genuinamente apagada o en pausa por puerta/ventana — nunca por una
+  decisión de calor/frío.
+- Deshumidificar (lo contrario) ya estaba cubierto por el modo `dry` de
+  un `climate.*` delegado (ver punto 10) — humidificar rellena el hueco
+  que faltaba, subir la humedad cuando está demasiado baja.
+
+## 14. Modo vs. preset vs. temperatura
 
 Aquí ya no hay ninguna anulación con caducidad — los tres son elecciones
 **persistentes**, cada una se restaura sola tras un reinicio:
@@ -306,7 +339,7 @@ Aquí ya no hay ninguna anulación con caducidad — los tres son elecciones
   termostato: pasa la zona al preset "Manual" (ver punto 5) — se queda
   con esa temperatura hasta que tú mismo cambies a otro preset.
 
-## 14. Inercia térmica aprendida
+## 15. Inercia térmica aprendida
 
 Se aprende de los dos tipos de actuador, no solo de switch: con un
 `switch.*` propio se usa directamente su historial de encendido/apagado;
@@ -317,7 +350,7 @@ reporta, esa zona se queda con valores conservadores por defecto (marcado
 `thermal_model_reliable: false` en los atributos de la entidad) — nunca
 se inventa una cifra.
 
-## 15. Modo simulación
+## 16. Modo simulación
 
 Con "Modo simulación" activo en una zona (por defecto), la integración
 calcula y publica lo que haría (visible en los atributos de la entidad),

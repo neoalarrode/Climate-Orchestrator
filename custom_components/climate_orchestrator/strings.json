@@ -23,6 +23,7 @@
         "description": "No need to declare heating/cooling capability by hand: it's detected from what you add here. Delegated climate.* entities are governed by their OWN native hvac_modes (a reversible heat pump just needs to appear once here — no separate heat/cool fields). Switches can't self-report, so they go in their matching list. Add as many of each as you actually have.",
         "data": {
           "climate_entities": "Existing climate.* entities to delegate to",
+          "humidifier_entities": "Existing humidifier.* entities to delegate to (optional)",
           "heat_switches": "Heating switches",
           "cool_switches": "Cooling switches"
         }
@@ -50,7 +51,8 @@
           "min_temp": "Minimum (always enforced floor)",
           "max_temp": "Maximum (always enforced ceiling)",
           "min_on_seconds": "Minimum ON time (s)",
-          "min_off_seconds": "Minimum OFF time (s)"
+          "min_off_seconds": "Minimum OFF time (s)",
+          "target_humidity": "Target humidity (%) — single value per zone"
         }
       },
       "options": {
@@ -82,6 +84,7 @@
           "outdoor_temp_sensor": "This zone's own outdoor sensor (optional)",
           "weather_entity": "weather.* entity with hourly forecast (optional)",
           "climate_entities": "Existing climate.* entities to delegate to",
+          "humidifier_entities": "Existing humidifier.* entities to delegate to (optional)",
           "heat_switches": "Heating switches",
           "cool_switches": "Cooling switches",
           "presets_text": "Presets (\"Name: temperature\", comma-separated)",
@@ -92,6 +95,7 @@
           "max_temp": "Maximum (always enforced ceiling)",
           "min_on_seconds": "Minimum ON time (s)",
           "min_off_seconds": "Minimum OFF time (s)",
+          "target_humidity": "Target humidity (%) — single value per zone",
           "presence_entities": "Presence entities",
           "door_window_entities": "Door/window sensors (pauses instantly when open)",
           "history_days_for_inertia": "History days for thermal inertia",

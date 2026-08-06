@@ -25,6 +25,7 @@ from .const import (
     CONF_FORECAST_REFRESH_MINUTES,
     CONF_HEAT_SWITCHES,
     CONF_HISTORY_DAYS_FOR_INERTIA,
+    CONF_HUMIDIFIER_ENTITIES,
     CONF_HUMIDITY_SENSOR,
     CONF_MAX_TEMP,
     CONF_MIN_OFF_SECONDS,
@@ -36,6 +37,7 @@ from .const import (
     CONF_PRESETS_TEXT,
     CONF_PRIORITY,
     CONF_SIMULATE,
+    CONF_TARGET_HUMIDITY,
     CONF_WEATHER_ENTITY,
     DEFAULT_DEADBAND,
     DEFAULT_DRY_HUMIDITY_THRESHOLD,
@@ -45,6 +47,7 @@ from .const import (
     DEFAULT_MIN_OFF_SECONDS,
     DEFAULT_MIN_ON_SECONDS,
     DEFAULT_MIN_TEMP,
+    DEFAULT_TARGET_HUMIDITY,
     DOMAIN,
 )
 
@@ -90,6 +93,10 @@ def _percent_number():
     return selector.NumberSelector(selector.NumberSelectorConfig(min=30, max=90, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="%"))
 
 
+def _target_humidity_number():
+    return selector.NumberSelector(selector.NumberSelectorConfig(min=20, max=80, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="%"))
+
+
 def _preset_names_selector(names: list[str]):
     return selector.SelectSelector(selector.SelectSelectorConfig(
         options=[selector.SelectOptionDict(value=n, label=n) for n in names], mode=selector.SelectSelectorMode.DROPDOWN,
@@ -106,6 +113,7 @@ def _actuator_fields() -> dict:
         vol.Optional(CONF_CLIMATE_ENTITIES, default=[]): _entity("climate", multiple=True),
         vol.Optional(CONF_HEAT_SWITCHES, default=[]): _entity("switch", multiple=True),
         vol.Optional(CONF_COOL_SWITCHES, default=[]): _entity("switch", multiple=True),
+        vol.Optional(CONF_HUMIDIFIER_ENTITIES, default=[]): _entity("humidifier", multiple=True),
     }
 
 
@@ -209,9 +217,12 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_MAX_TEMP, default=DEFAULT_MAX_TEMP): _temp_number(),
             vol.Optional(CONF_MIN_ON_SECONDS, default=DEFAULT_MIN_ON_SECONDS): _seconds_number(),
             vol.Optional(CONF_MIN_OFF_SECONDS, default=DEFAULT_MIN_OFF_SECONDS): _seconds_number(),
+            vol.Optional(CONF_TARGET_HUMIDITY, default=DEFAULT_TARGET_HUMIDITY): _target_humidity_number(),
         })
         return self.async_show_form(step_id="limits", data_schema=schema, description_placeholders={
-            "limits_note": "Techo/suelo de seguridad: se respetan SIEMPRE, haya o no presencia, sea cual sea el preset activo."
+            "limits_note": "Techo/suelo de seguridad: se respetan SIEMPRE, haya o no presencia, sea cual sea el preset activo.",
+            "humidity_note": "Consigna de humedad (solo si declaraste humidifier_entities en Actuadores): un único valor por "
+                              "zona, no por preset — también ajustable al vuelo desde la tarjeta del termostato."
         })
 
     async def async_step_options(self, user_input=None):
@@ -289,6 +300,7 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(CONF_CLIMATE_ENTITIES, default=current.get(CONF_CLIMATE_ENTITIES, [])): _entity("climate", multiple=True),
             vol.Optional(CONF_HEAT_SWITCHES, default=current.get(CONF_HEAT_SWITCHES, [])): _entity("switch", multiple=True),
             vol.Optional(CONF_COOL_SWITCHES, default=current.get(CONF_COOL_SWITCHES, [])): _entity("switch", multiple=True),
+            vol.Optional(CONF_HUMIDIFIER_ENTITIES, default=current.get(CONF_HUMIDIFIER_ENTITIES, [])): _entity("humidifier", multiple=True),
             vol.Required(CONF_PRESETS_TEXT, default=current.get(CONF_PRESETS_TEXT, "Confort: 21/25, Ausente: 17/28")): str,
             vol.Required(CONF_PRESENCE_PRESET, default=current.get(CONF_PRESENCE_PRESET, "Confort")): str,
             vol.Required(CONF_AWAY_PRESET, default=current.get(CONF_AWAY_PRESET, "Ausente")): str,
@@ -306,6 +318,7 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=current.get(CONF_FORECAST_REFRESH_MINUTES, DEFAULT_FORECAST_REFRESH_MINUTES)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
             vol.Optional(CONF_DRY_HUMIDITY_THRESHOLD, default=current.get(CONF_DRY_HUMIDITY_THRESHOLD, DEFAULT_DRY_HUMIDITY_THRESHOLD)): _percent_number(),
+            vol.Optional(CONF_TARGET_HUMIDITY, default=current.get(CONF_TARGET_HUMIDITY, DEFAULT_TARGET_HUMIDITY)): _target_humidity_number(),
             vol.Optional(CONF_SIMULATE, default=current.get(CONF_SIMULATE, True)): selector.BooleanSelector(),
         }
         return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)

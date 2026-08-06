@@ -46,6 +46,26 @@ CONF_HUMIDITY_SENSOR = "humidity_sensor"
 CONF_OUTDOOR_TEMP_SENSOR = "outdoor_temp_sensor"
 CONF_WEATHER_ENTITY = "weather_entity"
 
+# Humidificacion: entidades humidifier.* YA EXISTENTES en las que delegar
+# (el humidificador fisico) — mismo espiritu que climate_entities, se
+# detecta su presencia, nunca hace falta declarar "que sabe hacer" a
+# mano. Funcion NATIVA de esta zona (ClimateEntityFeature.TARGET_HUMIDITY
+# en el propio climate.* de la zona — target_humidity ajustable desde la
+# misma tarjeta, como la temperatura), integrada en el funcionamiento
+# normal de la zona (activa siempre que la zona no este apagada ni en
+# pausa por puerta/ventana, sea cual sea el hvac_mode concreto — Auto,
+# calor, frio... "integrada en Auto" en el sentido de "parte del
+# funcionamiento automatico", no exclusiva de ese modo). Consigna UNICA
+# por zona (no por preset, a diferencia de calor/frio): se trata como un
+# limite mas, configurable en "Configurar" — ver CONF_MIN_TEMP/
+# CONF_MAX_TEMP — aunque tambien se puede ajustar al vuelo desde la
+# tarjeta del termostato, igual que la temperatura.
+CONF_HUMIDIFIER_ENTITIES = "humidifier_entities"
+CONF_TARGET_HUMIDITY = "target_humidity"
+DEFAULT_TARGET_HUMIDITY = 45.0
+DEFAULT_MIN_HUMIDITY = 20.0
+DEFAULT_MAX_HUMIDITY = 80.0
+
 # Presets con nombre en vez de horario (ver presets.py: se elimino la
 # franja horaria fija a proposito — no sabe si hay alguien de verdad en
 # la habitacion). "Nombre: temperatura, Nombre: temperatura..." declarado

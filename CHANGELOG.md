@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0
+
+- **Nuevo: humidificación**. Una zona puede delegar en entidades
+  `humidifier.*` ya existentes (paso 3 del asistente, opcional) para
+  humidificar de verdad. No es un modo más: es una función nativa y
+  paralela del propio termostato de la zona
+  (`ClimateEntityFeature.TARGET_HUMIDITY`, con `target_humidity`/
+  `current_humidity` ajustables desde la misma tarjeta), activa siempre
+  que la zona no esté apagada ni en pausa por puerta/ventana, sea cual
+  sea el hvac_mode concreto. Consigna única por zona (no por preset),
+  configurable en "Configurar" o ajustable al vuelo desde la tarjeta.
+  Cada `humidifier.*` delegado se enciende con esa consigna y se deja
+  que su propia lógica interna decida cuándo humidificar — mismo
+  espíritu que el reposo mantenido de los `climate.*` delegados (0.6.0).
+- Corregido de paso: el sensor de humedad (`CONF_HUMIDITY_SENSOR`) ahora
+  también está en la lista de sensores escuchados — antes solo se leía
+  en el siguiente ciclo, sin reaccionar al instante a sus cambios.
+
 ## 0.6.1
 
 - Nuevo atributo `outdoor_forecast` en la entidad de la zona: la

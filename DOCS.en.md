@@ -57,6 +57,8 @@ each (you can combine all three in the same zone):
   switch can't self-report what it's for, so these do go in their
   matching list. The integration turns them on/off with hysteresis and
   anti short-cycling (minimum on/off time).
+- **Delegated humidifier.\*** (optional): existing `humidifier.*`
+  entities to delegate humidifying to — see point 13.
 
 The zone's final capability (heat only / cool only / both) — and
 therefore which modes Home Assistant and any Matter/HomeKit bridge
@@ -83,7 +85,8 @@ These two are what "Auto" mode (the default active preset) uses.
 that are ALWAYS enforced**, no matter the active preset, presence, or
 manual mode — the configurable-per-zone "never below 12°C in winter even
 with nobody home, never above 30°C in summer". Also minimum on/off times
-(only relevant with a switch actuator).
+(only relevant with a switch actuator) and the target humidity (only if
+you declared `humidifier_entities` in step 3, see point 13).
 
 **Step 7 — Presence, doors/windows and options**: presence entities,
 door/window sensors, history days for thermal inertia, forecast refresh
@@ -277,7 +280,35 @@ survives restarts — visible in the `delegate_needs_explicit_off`
 attribute. No black box: it's a simple observed-behavior counter, not a
 trained model.
 
-## 13. Mode vs. preset vs. temperature
+## 13. Humidifying
+
+Besides heat/cool/dry/fan_only, a zone can delegate to existing
+`humidifier.*` entities (wizard step 3, optional) to genuinely humidify.
+Unlike everything above, this is NOT another mode — it's a **native,
+parallel** feature of the zone's own thermostat —
+`ClimateEntityFeature.TARGET_HUMIDITY`, with its own `target_humidity`/
+`current_humidity` adjustable from the same card, just like temperature —
+that coexists with whatever hvac_mode is active (Auto, heat, cool...).
+"Integrated into normal operation" in that sense: it doesn't need a
+specific mode to run, just the zone not being off or door/window-paused.
+
+- **Single target per zone** (not per preset, unlike heat/cool): one
+  target humidity value (45% by default), configurable in "Configure" or
+  adjustable live from the thermostat card itself — restored across
+  restarts like any other card-set value.
+- **How it's controlled**: while the zone is active, each delegated
+  `humidifier.*` is turned on with that target and left to its own
+  internal logic to decide when to actually humidify — the same spirit
+  as the sustained idle of `climate.*` delegates (see point 12): no need
+  to reimplement hysteresis, a normal home humidifier already knows how
+  to stop on its own once it reaches its target. It's only turned off
+  when the zone is genuinely off or door/window-paused — never because of
+  a heat/cool decision.
+- Dehumidifying (the opposite) was already covered by a delegated
+  `climate.*`'s `dry` mode (see point 10) — humidifying fills the gap
+  that was missing: raising humidity when it's too low.
+
+## 14. Mode vs. preset vs. temperature
 
 None of these expire on their own anymore — all three are **standing**
 choices, each restored across restarts:
@@ -289,7 +320,7 @@ choices, each restored across restarts:
   switches the zone to the "Manual" preset (see point 5) — it keeps that
   temperature until you switch to another preset yourself.
 
-## 14. Learned thermal inertia
+## 15. Learned thermal inertia
 
 Learned from both actuator types, not just switches: a plain `switch.*`
 uses its own on/off history directly; a delegated `climate.*` uses the
@@ -299,7 +330,7 @@ never does, that zone simply keeps conservative defaults (flagged
 `thermal_model_reliable: false` in the entity's attributes) — never a
 made-up number.
 
-## 15. Simulation mode
+## 16. Simulation mode
 
 With "Simulation mode" on for a zone (default), the integration computes
 and publishes what it would do (visible in the entity's attributes), but

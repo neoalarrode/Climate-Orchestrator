@@ -23,6 +23,7 @@
         "description": "No hace falta declarar capacidad de calor/frío a mano: se detecta sola a partir de lo que añadas aquí. Los climate.* delegados se gobiernan por SUS PROPIOS hvac_modes nativos (una bomba de calor reversible solo hace falta añadirla una vez aquí — sin campos separados de calor/frío). Los switches no pueden autodeclararse, así que van en su lista correspondiente. Añade tantos de cada uno como tengas de verdad.",
         "data": {
           "climate_entities": "Entidades climate.* existentes en las que delegar",
+          "humidifier_entities": "Entidades humidifier.* existentes en las que delegar (opcional)",
           "heat_switches": "Switches de calefacción",
           "cool_switches": "Switches de refrigeración"
         }
@@ -50,7 +51,8 @@
           "min_temp": "Mínimo (suelo siempre aplicado)",
           "max_temp": "Máximo (techo siempre aplicado)",
           "min_on_seconds": "Tiempo mínimo encendido (s)",
-          "min_off_seconds": "Tiempo mínimo apagado (s)"
+          "min_off_seconds": "Tiempo mínimo apagado (s)",
+          "target_humidity": "Humedad objetivo (%) — un único valor por zona"
         }
       },
       "options": {
@@ -82,6 +84,7 @@
           "outdoor_temp_sensor": "Sensor exterior propio de esta zona (opcional)",
           "weather_entity": "Entidad weather.* con previsión horaria (opcional)",
           "climate_entities": "Entidades climate.* existentes en las que delegar",
+          "humidifier_entities": "Entidades humidifier.* existentes en las que delegar (opcional)",
           "heat_switches": "Switches de calefacción",
           "cool_switches": "Switches de refrigeración",
           "presets_text": "Presets («Nombre: temperatura», separados por comas)",
@@ -92,6 +95,7 @@
           "max_temp": "Máximo (techo siempre aplicado)",
           "min_on_seconds": "Tiempo mínimo encendido (s)",
           "min_off_seconds": "Tiempo mínimo apagado (s)",
+          "target_humidity": "Humedad objetivo (%) — un único valor por zona",
           "presence_entities": "Entidades de presencia",
           "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
           "history_days_for_inertia": "Días de histórico para la inercia térmica",

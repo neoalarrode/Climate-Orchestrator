@@ -91,8 +91,8 @@ tipo switch).
 
 **Paso 7 — Presencia, puertas/ventanas y opciones**: entidades de
 presencia, sensores de puerta/ventana, días de histórico para la inercia térmica, frecuencia de
-recálculo de la previsión, reposo inteligente (opcional, ver punto 10) y
-modo simulación.
+recálculo de la previsión, umbral de humedad para el reposo inteligente
+(ver punto 10) y modo simulación.
 
 ## 4. Presencia: sensores FÍSICOS de la habitación, no "en casa"
 
@@ -185,49 +185,51 @@ El mapeo de modos hvac de Home Assistant al `SystemMode` del clúster
 Thermostat de Matter (el que usa cualquier puente, incluido
 `home-assistant-matter-hub`) es directo y no necesita ninguna traducción
 de nuestra parte: `off`→Off, `heat`→Heat, `cool`→Cool,
-`heat_cool`→**Auto**, `dry`→Dry, `fan_only`→FanOnly — exactamente lo que
-esta zona expone. Además, siempre que haya algo más que "apagado" que
-ofrecer, la zona declara encendido/apagado como un interruptor real (no
-solo un modo más en un desplegable) — esto es lo que hace que el botón de
+`heat_cool`→**Auto** — exactamente lo que esta zona expone (`dry`/
+`fan_only` NO son modos seleccionables de esta zona, ver punto 10).
+Además, siempre que haya algo más que "apagado" que ofrecer, la zona
+declara encendido/apagado como un interruptor real (no solo un modo más
+en un desplegable) — esto es lo que hace que el botón de
 encendido/apagado aparezca en cualquier puente Matter/HomeKit/Google Home
 en vez de quedar oculto.
 
-**Aviso honesto**: aunque Matter transporta `dry`/`fan_only` sin
-problema, Apple Home, Google Home y Alexa suelen limitar lo que
-MUESTRAN de un termostato a Calor/Frío/Auto/Apagado — puede que no
-aparezcan como botón en esas apps concretas aunque el dato viaje bien.
-Desde la propia Home Assistant (tarjeta del termostato, Lovelace) sí se
-ven siempre los cuatro.
-
-## 10. Modos `dry`/`fan_only` y reposo inteligente
+## 10. Reposo inteligente: `dry`/`fan_only` en el delegado, sin sacar la zona de Auto
 
 Un `climate.*` delegado puede declarar en sus propios `hvac_modes` algo
 más que calor/frío: por ejemplo, muchos aires acondicionados también
 soportan `dry` (deshumidificar) o `fan_only` (solo ventilador). Climate
-Orchestrator los detecta igual que calor/frío — en vivo, nunca a mano — y
-esta zona los añade a los modos disponibles del termostato. Un radiador
-que solo declare `off`/`heat` sigue sin aportar ninguno de los dos.
+Orchestrator los detecta igual que calor/frío — en vivo, nunca a mano —
+pero **nunca los añade como modo seleccionable de esta zona**: el hvac
+mode de la zona nunca sale de apagado/Auto/calor/frío. Un radiador que
+solo declare `off`/`heat` sigue sin aportar ninguno de los dos.
 
-- **A mano**: elegir "Deshumidificar" o "Solo ventilador" desde la
-  tarjeta del termostato (o Google Home/Alexa/Matter) manda esa orden tal
-  cual al equipo que la soporte — no persigue ninguna temperatura, es una
-  elección directa tuya, tan persistente como cualquier otro modo.
-- **Reposo inteligente, automático y OPCIONAL** (desactivado por
-  defecto — no cambia nada en una zona existente hasta que lo actives):
-  en vez de apagar del todo cuando la zona ya está dentro de margen (ni
-  hace falta calor ni frío), el equipo puede aprovecharse él solo:
-  - **Ventilar en reposo**: activa "Reposo inteligente: ventilar en vez
-    de apagar" (paso 7 del asistente, o "Configurar") si prefieres que
-    circule el aire en vez de apagarse del todo.
-  - **Deshumidificar automáticamente**: activa "Reposo inteligente:
-    deshumidificar por encima del umbral de humedad" y configura el
-    umbral (%, por defecto 65%) — necesita además un sensor de humedad
-    declarado en el paso 2. Si la humedad medida lo supera mientras la
-    zona está en reposo, deshumidifica en vez de apagar; tiene prioridad
-    sobre ventilar, porque responde a algo medido, no solo a comodidad.
+En vez de eso, se usan solo para el **reposo inteligente** — sin
+interruptor que activar aparte, porque en el fondo es la misma idea que
+"Auto" ya representa (decidir sola entre todo lo disponible): en cuanto
+la zona ya no necesita ni calor ni frío (dentro de margen) y sigue en el
+modo más automático que tenga (Auto en una zona con calor y frío de
+verdad; el único modo que le queda a una de un solo sentido — si
+bloqueaste la zona a mano a "solo calor" en una que también tiene frío,
+está claro que quieres control manual y el reposo inteligente no
+interviene), el equipo delegado puede aprovecharse él solo en vez de
+apagarse del todo:
 
-Ninguno de los dos sustituye nunca a calor/frío cuando de verdad hacen
-falta — solo deciden qué hacer mientras la zona ya está en reposo.
+- **Ventilar** por comodidad, si el delegado soporta `fan_only`.
+- **Deshumidificar**, con prioridad sobre ventilar, si el delegado
+  soporta `dry` y la humedad medida supera un umbral — configurable por
+  zona (paso 7 del asistente, o "Configurar"; 65% por defecto), igual que
+  cualquier otro límite. Necesita además un sensor de humedad declarado
+  en el paso 2.
+
+El hvac_mode de la zona **nunca cambia** por esto — de cara al
+usuario/Matter/HomeKit sigue "en Auto" aunque por debajo el equipo esté
+ventilando o deshumidificando un rato. Si el delegado no soporta lo que
+le toca, se apaga sin más, nunca se le fuerza nada.
+
+**Aviso honesto**: aunque Matter transporta `dry`/`fan_only` sin
+problema cuando se usan, Apple Home, Google Home y Alexa suelen limitar
+lo que MUESTRAN de un termostato a Calor/Frío/Auto/Apagado — como aquí
+nunca son un modo seleccionable, esto no debería notarse en la práctica.
 
 ## 11. Límites de seguridad
 

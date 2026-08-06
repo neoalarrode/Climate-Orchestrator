@@ -73,21 +73,22 @@ CONF_MIN_ON_SECONDS = "min_on_seconds"
 CONF_MIN_OFF_SECONDS = "min_off_seconds"
 CONF_PRIORITY = "priority"                     # "confort" | "ahorro" | "manual"
 
-# Reposo INTELIGENTE, opcional (desactivado por defecto — no cambia el
-# comportamiento de ninguna zona existente sin que el usuario lo active a
-# proposito): en vez de simplemente apagar cuando ya se esta dentro de
-# margen (ni hace falta calor ni frio), un climate.* delegado que TAMBIEN
-# sepa deshumidificar o solo ventilar (detectado en vivo, ver
-# `_compute_capability` en climate.py — nunca declarado a mano) puede
-# aprovecharse. Deshumidificar tiene prioridad sobre ventilar: responde a
-# un problema medido (humedad alta), no solo a comodidad. Ninguno de los
-# dos decide nunca una temperatura ni sustituye a calor/frio cuando de
-# verdad hacen falta — solo cambian que hacer mientras la zona ya esta en
-# reposo. El umbral de humedad es configurable por zona, igual que
-# cualquier otro limite (ver CONF_MIN_TEMP/CONF_MAX_TEMP) — nunca un
-# numero fijo en el codigo.
-CONF_AUTO_FAN_IDLE = "auto_fan_idle"
-CONF_AUTO_DRY_HUMIDITY = "auto_dry_humidity"
+# Reposo INTELIGENTE — sin interruptor propio: coexiste solo con el modo
+# mas automatico que tenga la zona (Auto en una con calor y frio de
+# verdad; el unico modo que le queda a una de un solo sentido, que ya es
+# "lo mas automatico" que puede ofrecer — ver la llamada en
+# `_async_decide_and_act`, climate.py). En vez de simplemente apagar
+# cuando ya se esta dentro de margen (ni hace falta calor ni frio), un
+# climate.* delegado que TAMBIEN sepa deshumidificar o solo ventilar
+# (detectado en vivo, ver `_compute_capability` en climate.py — nunca
+# declarado a mano) puede aprovecharse. Deshumidificar tiene prioridad
+# sobre ventilar: responde a un problema medido (humedad alta), no solo a
+# comodidad. Ninguno de los dos decide nunca una temperatura ni sustituye
+# a calor/frio cuando de verdad hacen falta, ni cambia el hvac_mode de la
+# zona — solo la orden que recibe el delegado mientras esta en reposo. El
+# umbral de humedad SI es configurable por zona, igual que cualquier otro
+# limite (ver CONF_MIN_TEMP/CONF_MAX_TEMP) — nunca un numero fijo en el
+# codigo.
 CONF_DRY_HUMIDITY_THRESHOLD = "dry_humidity_threshold"
 DEFAULT_DRY_HUMIDITY_THRESHOLD = 65.0
 

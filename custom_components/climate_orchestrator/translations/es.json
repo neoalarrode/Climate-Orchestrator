@@ -61,8 +61,6 @@
           "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
           "history_days_for_inertia": "Días de histórico para la inercia térmica",
           "forecast_refresh_minutes": "Frecuencia de recálculo de la previsión",
-          "auto_fan_idle": "Reposo inteligente: ventilar en vez de apagar del todo (si el equipo lo soporta)",
-          "auto_dry_humidity": "Reposo inteligente: deshumidificar por encima del umbral de humedad (si el equipo lo soporta)",
           "dry_humidity_threshold": "Umbral de humedad para deshumidificar",
           "simulate": "Modo simulación (nunca toca actuadores reales)"
         }
@@ -98,8 +96,6 @@
           "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
           "history_days_for_inertia": "Días de histórico para la inercia térmica",
           "forecast_refresh_minutes": "Frecuencia de recálculo de la previsión",
-          "auto_fan_idle": "Reposo inteligente: ventilar en vez de apagar del todo (si el equipo lo soporta)",
-          "auto_dry_humidity": "Reposo inteligente: deshumidificar por encima del umbral de humedad (si el equipo lo soporta)",
           "dry_humidity_threshold": "Umbral de humedad para deshumidificar",
           "simulate": "Modo simulación (nunca toca actuadores reales)"
         }

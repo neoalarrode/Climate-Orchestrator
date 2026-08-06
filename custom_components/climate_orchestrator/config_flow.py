@@ -15,8 +15,6 @@ from homeassistant.helpers import selector
 
 from . import presets as presets_module
 from .const import (
-    CONF_AUTO_DRY_HUMIDITY,
-    CONF_AUTO_FAN_IDLE,
     CONF_AWAY_PRESET,
     CONF_CLIMATE_ENTITIES,
     CONF_COOL_SWITCHES,
@@ -229,8 +227,6 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días")),
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=DEFAULT_FORECAST_REFRESH_MINUTES): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
-            vol.Optional(CONF_AUTO_FAN_IDLE, default=False): selector.BooleanSelector(),
-            vol.Optional(CONF_AUTO_DRY_HUMIDITY, default=False): selector.BooleanSelector(),
             vol.Optional(CONF_DRY_HUMIDITY_THRESHOLD, default=DEFAULT_DRY_HUMIDITY_THRESHOLD): _percent_number(),
             vol.Optional(CONF_SIMULATE, default=True): selector.BooleanSelector(),
         })
@@ -238,10 +234,11 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "presence_note": "Pensado para sensores de presencia FÍSICA de esta habitación (PIR, mmWave, radar de presencia...), "
                               "no solo \"en casa\": binary_sensor de ocupación/movimiento es la señal principal. "
                               "person./device_tracker. también se aceptan, como señal adicional.",
-            "smart_idle_note": "Reposo inteligente (opcional, desactivado por defecto): en vez de apagar del todo cuando ya no "
-                                "hace falta calor ni frío, un climate.* delegado que también sepa ventilar o deshumidificar puede "
-                                "usarse — solo si el equipo lo soporta de verdad. Deshumidificar solo se activa si además hay un "
-                                "sensor de humedad configurado (paso Sensores) y su lectura supera el umbral elegido."
+            "smart_idle_note": "Reposo inteligente: en cuanto la zona ya no necesita calor ni frío (y sigue en el modo más "
+                                "automático que tenga, Auto o su único modo), un climate.* delegado que también sepa ventilar o "
+                                "deshumidificar se usa solo — solo si el equipo lo soporta de verdad. Deshumidificar solo se "
+                                "activa si además hay un sensor de humedad configurado (paso Sensores) y su lectura supera el "
+                                "umbral elegido."
         })
 
     @staticmethod
@@ -308,8 +305,6 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
                 selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días")),
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=current.get(CONF_FORECAST_REFRESH_MINUTES, DEFAULT_FORECAST_REFRESH_MINUTES)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
-            vol.Optional(CONF_AUTO_FAN_IDLE, default=current.get(CONF_AUTO_FAN_IDLE, False)): selector.BooleanSelector(),
-            vol.Optional(CONF_AUTO_DRY_HUMIDITY, default=current.get(CONF_AUTO_DRY_HUMIDITY, False)): selector.BooleanSelector(),
             vol.Optional(CONF_DRY_HUMIDITY_THRESHOLD, default=current.get(CONF_DRY_HUMIDITY_THRESHOLD, DEFAULT_DRY_HUMIDITY_THRESHOLD)): _percent_number(),
             vol.Optional(CONF_SIMULATE, default=current.get(CONF_SIMULATE, True)): selector.BooleanSelector(),
         }

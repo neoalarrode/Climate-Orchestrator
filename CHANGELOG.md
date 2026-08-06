@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0
+
+Corrección de diseño tras probarlo en real: `dry`/`fan_only` **ya no son
+un modo seleccionable de la zona**. El hvac_mode de la propia integración
+nunca sale de apagado/Auto/calor/frío — seguían apareciendo en el
+desplegable del termostato y, al elegirlos, sacaban la zona de "Auto" de
+verdad, perdiendo la gestión de temperatura mientras tanto. Ahora
+`dry`/`fan_only` son solo algo que el **reposo inteligente** le manda
+directo al `climate.*` delegado (si lo soporta; si no, se apaga) sin que
+el modo de la zona cambie nunca.
+
+- **Quitados los interruptores de "Reposo inteligente: ventilar" y
+  "...deshumidificar"**: ya no hace falta activarlos a mano — coexiste
+  solo con el modo más automático que tenga la zona (Auto en una con
+  calor y frío de verdad; el único modo de una de un solo sentido), que
+  ya es "decidir sola entre todo lo disponible", la misma idea. Si
+  bloqueas la zona a mano a "solo calor"/"solo frío" en una que también
+  tiene el otro lado, el reposo inteligente se aparta — está claro que
+  quieres control manual.
+- El umbral de humedad para deshumidificar sigue siendo configurable por
+  zona (65% por defecto).
+- Documentación actualizada (ES/EN): quitado el apartado "a mano" de
+  dry/fan_only, reescrita la sección de reposo inteligente.
+
 ## 0.3.3
 
 Revisada la especificación real del clúster Thermostat de Matter (y del

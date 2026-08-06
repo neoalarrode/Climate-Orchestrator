@@ -87,7 +87,8 @@ with nobody home, never above 30°C in summer". Also minimum on/off times
 
 **Step 7 — Presence, doors/windows and options**: presence entities,
 door/window sensors, history days for thermal inertia, forecast refresh
-interval, smart idle (optional, see point 10), and simulation mode.
+interval, the smart idle humidity threshold (see point 10), and
+simulation mode.
 
 ## 4. Presence: the room's PHYSICAL sensors, not "home"
 
@@ -174,49 +175,50 @@ there.
 The mapping from Home Assistant's hvac modes to the Matter Thermostat
 cluster's `SystemMode` (the one any bridge uses, including
 `home-assistant-matter-hub`) is direct and needs no translation on our
-part: `off`→Off, `heat`→Heat, `cool`→Cool, `heat_cool`→**Auto**,
-`dry`→Dry, `fan_only`→FanOnly — exactly what this zone exposes. Also,
-whenever there's more than just "off" to offer, the zone declares
-on/off as a real switch (not just one more mode buried in a dropdown) —
-this is what makes the power button show up on any Matter/HomeKit/Google
-Home bridge instead of staying hidden.
+part: `off`→Off, `heat`→Heat, `cool`→Cool, `heat_cool`→**Auto** —
+exactly what this zone exposes (`dry`/`fan_only` are NOT selectable
+modes of this zone, see point 10). Also, whenever there's more than just
+"off" to offer, the zone declares on/off as a real switch (not just one
+more mode buried in a dropdown) — this is what makes the power button
+show up on any Matter/HomeKit/Google Home bridge instead of staying
+hidden.
 
-**Honest caveat**: even though Matter carries `dry`/`fan_only` fine,
-Apple Home, Google Home and Alexa typically limit what they SHOW for a
-thermostat to Heat/Cool/Auto/Off — they may not surface those as a
-button in those specific apps even though the data travels correctly.
-From Home Assistant itself (thermostat card, Lovelace) all four are
-always visible.
-
-## 10. `dry`/`fan_only` modes and smart idle
+## 10. Smart idle: `dry`/`fan_only` on the delegate, without pulling the zone out of Auto
 
 A delegated `climate.*` can declare more than heat/cool in its own
 `hvac_modes` — many air conditioners also support `dry` (dehumidify) or
 `fan_only` (fan only). Climate Orchestrator detects those the same way as
-heat/cool — live, never by hand — and this zone adds them to the
-thermostat's available modes. A radiator that only declares `off`/`heat`
-still contributes neither.
+heat/cool — live, never by hand — but **never adds them as a selectable
+mode of this zone**: the zone's own hvac mode never leaves off/auto/
+heat/cool. A radiator that only declares `off`/`heat` still contributes
+neither.
 
-- **By hand**: picking "Dry" or "Fan only" from the thermostat card (or
-  Google Home/Alexa/Matter) sends that command straight to whichever
-  device supports it — it doesn't chase any temperature, it's a direct
-  choice of yours, as standing as any other mode.
-- **Smart idle, automatic and OPTIONAL** (off by default — doesn't
-  change anything on an existing zone until you turn it on): instead of
-  turning off completely once the zone is already within margin (no heat
-  or cool needed), the device can make itself useful:
-  - **Fan on idle**: turn on "Smart idle: use fan instead of turning off"
-    (wizard step 7, or "Configure") if you'd rather circulate air than
-    shut off entirely.
-  - **Automatic dehumidifying**: turn on "Smart idle: use dry mode above
-    the humidity threshold" and set the threshold (%, 65% by default) —
-    also needs a humidity sensor declared in step 2. If measured humidity
-    goes over it while the zone is idle, it dehumidifies instead of
-    turning off; this takes priority over fan mode, since it responds to
-    something measured, not just comfort.
+Instead, they're used only for **smart idle** — no separate switch to
+turn on, since it's really the same idea "Auto" already represents
+(deciding on its own among everything available): as soon as the zone no
+longer needs heat or cool (within margin) and is still in the zone's most
+automatic mode (Auto for a zone with genuine heating and cooling; the
+only mode a single-direction zone has — if you locked the zone by hand to
+"heat only" on one that also has cooling, that's clearly manual control
+and smart idle stays out of it), the delegated device can make itself
+useful instead of turning off completely:
 
-Neither ever replaces heat/cool when they're genuinely needed — they only
-decide what to do while the zone is already idle.
+- **Fan**, for comfort, if the delegate supports `fan_only`.
+- **Dehumidify**, taking priority over fan, if the delegate supports
+  `dry` and measured humidity goes over a threshold — configurable per
+  zone (wizard step 7, or "Configure"; 65% by default), like any other
+  limit. Also needs a humidity sensor declared in step 2.
+
+The zone's hvac mode **never changes** because of this — to the
+user/Matter/HomeKit it stays "in Auto" even while the device underneath
+is fanning or dehumidifying for a while. If the delegate doesn't support
+what's asked of it, it's simply turned off — nothing is ever forced on
+it.
+
+**Honest caveat**: even though Matter carries `dry`/`fan_only` fine when
+they're used, Apple Home, Google Home and Alexa typically limit what
+they SHOW for a thermostat to Heat/Cool/Auto/Off — since these are never
+a selectable mode here, that shouldn't matter in practice.
 
 ## 11. Safety limits
 

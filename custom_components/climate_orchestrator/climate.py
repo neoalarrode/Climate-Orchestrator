@@ -37,18 +37,19 @@ elijas otro preset o vuelvas a "Automático" (ver presets.py).
 
 Tampoco hay "capacidad" (calor/frio/ambos) declarada a mano: se DEDUCE en
 vivo de los actuadores de verdad configurados (ver `_refresh_hvac_modes`).
-Y no se limita a calor/frio: si un climate.* delegado declara TAMBIEN
-"dry" o "fan_only" en sus propios hvac_modes (p.ej. un aire acondicionado
-con deshumidificacion o solo ventilador), esta zona los hereda igual — un
-radiador que solo sepa "off"/"heat" simplemente no los aporta. Elegirlos a
-mano desde el termostato los relega directos al equipo, sin pasar por
-ninguna consigna de temperatura (ver `_PASSTHROUGH_MODES`); ademas, un
-"reposo inteligente" opcional (desactivado por defecto, ver
-CONF_AUTO_FAN_IDLE/CONF_AUTO_DRY_HUMIDITY en const.py) puede usarlos EL
-SOLO en vez de apagar del todo cuando la zona ya esta dentro de margen —
-ventilar por comodidad, o deshumidificar si la humedad medida supera un
-umbral configurable — sin que sustituyan nunca a calor/frio cuando de
-verdad hacen falta (ver `_smart_idle_action`).
+El hvac_mode de ESTA zona nunca sale de apagado/Auto/calor/frio — nada
+mas: si un climate.* delegado declara TAMBIEN "dry" o "fan_only" en sus
+propios hvac_modes (p.ej. un aire acondicionado con deshumidificacion o
+solo ventilador), esta zona los detecta igual, pero SOLO para que el
+"reposo inteligente" (ver `_smart_idle_action` — sin interruptor propio,
+coexiste solo con el modo mas automatico de la zona) se los pueda mandar
+DIRECTOS al delegado en vez de apagarlo del todo cuando la zona ya esta
+dentro de margen — ventilar por comodidad, o deshumidificar si la humedad
+medida supera un umbral configurable. El modo de esta zona NUNCA cambia
+por eso: sigue "en Auto" (o lo que tuviera) de cara al usuario/Matter/
+HomeKit aunque por debajo el equipo este ventilando o deshumidificando un
+rato — y si el delegado no soporta
+lo que le toca, se apaga sin mas, nunca se fuerza nada que no sepa hacer.
 """
 
 from __future__ import annotations
@@ -70,8 +71,6 @@ from homeassistant.util import dt as dt_util, slugify
 
 from . import outdoor, presets as presets_module, scheduler, thermal_model
 from .const import (
-    CONF_AUTO_DRY_HUMIDITY,
-    CONF_AUTO_FAN_IDLE,
     CONF_CLIMATE_ENTITIES,
     CONF_COOL_SWITCHES,
     CONF_CURRENT_TEMP_SENSOR,
@@ -113,12 +112,13 @@ _ACTION_MAP = {
     "dry": HVACAction.DRYING, "fan_only": HVACAction.FAN,
 }
 
-# Modos que NO se deciden solos por temperatura (no hay "consigna" que
-# perseguir): el usuario los elige a mano desde el termostato y se relegan
-# directos a quien de verdad los soporte (ver `_async_execute_passthrough_mode`).
-# Nunca los propone el motor de decision ni son el modo por defecto al
-# arrancar — a diferencia de calor/frio/Auto, que si se auto-seleccionan.
-_PASSTHROUGH_MODES = {HVACMode.DRY: "dry", HVACMode.FAN_ONLY: "fan_only"}
+# "Modos extra" que un climate.* delegado puede declarar ademas de calor/
+# frio (dry = deshumidificar, fan_only = solo ventilador). NUNCA son un
+# hvac_mode seleccionable de ESTA zona (ver `_refresh_hvac_modes`, que
+# solo expone apagado/Auto/calor/frio) — solo sirven para que el reposo
+# inteligente opcional (ver `_smart_idle_action`) sepa que puede mandarle
+# al delegado, sin que el modo de la zona cambie nunca.
+_SMART_IDLE_EXTRA_MODES = ("dry", "fan_only")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
@@ -223,9 +223,10 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         climate.* delegado aporta el conjunto COMPLETO de SUS PROPIOS
         `hvac_modes`, leidos en vivo del estado actual de esa entidad — no
         solo heat/cool: si un aire acondicionado declara tambien "dry" o
-        "fan_only", esta zona los hereda igual (ver `_refresh_hvac_modes` y
-        `_PASSTHROUGH_MODES`); un radiador que solo declare "off"/"heat" no
-        aporta nada mas que eso."""
+        "fan_only", esta zona los detecta igual (ver `_SMART_IDLE_EXTRA_MODES`
+        — solo para el reposo inteligente, nunca para el hvac_mode de esta
+        zona, ver `_refresh_hvac_modes`); un radiador que solo declare
+        "off"/"heat" no aporta nada mas que eso."""
         capability: set[str] = set()
         if self.zone.get(CONF_HEAT_SWITCHES):
             capability.add("heat")
@@ -234,7 +235,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         for entity_id in self.zone.get(CONF_CLIMATE_ENTITIES) or []:
             state = self.hass.states.get(entity_id)
             supported = (state.attributes.get("hvac_modes") if state else None) or []
-            for mode in ("heat", "cool", *_PASSTHROUGH_MODES.values()):
+            for mode in ("heat", "cool", *_SMART_IDLE_EXTRA_MODES):
                 if mode in supported:
                     capability.add(mode)
         return capability
@@ -249,15 +250,11 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         a mano a uno solo. Una zona de un solo sentido expone solo ese modo
         (mas apagado).
 
-        Ademas — y esto es lo que generaliza el reconocimiento mas alla de
-        calor/frio — si algun climate.* delegado declara tambien "dry" o
-        "fan_only" en sus PROPIOS hvac_modes, esta zona los añade tal
-        cual: no son modos que el motor de decision persiga con una
-        temperatura, son eleccion directa del usuario (ver
-        `_PASSTHROUGH_MODES` y el reposo inteligente opcional en
-        `_smart_idle_action`). Un switch nunca aporta dry/fan_only (no
-        tiene forma de hacerlo); un radiador con solo "off"/"heat" nunca
-        los expone tampoco.
+        OJO: dry/fan_only NUNCA se añaden a `_attr_hvac_modes` aunque
+        algun climate.* delegado los declare — ver la nota mas abajo,
+        antes de construir `modes`, y `_smart_idle_action`: son ordenes
+        que el reposo inteligente manda directas al delegado, nunca un
+        modo seleccionable de ESTA zona.
 
         Se llama al crear la entidad y en cada refresco de previsión — por
         si un climate.* delegado todavia no estaba disponible al arrancar
@@ -268,6 +265,18 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         capability = self._compute_capability()
         self._last_full_capability = capability
 
+        # OJO: dry/fan_only NUNCA se añaden aqui. La zona (esta entidad)
+        # solo expone los modos de TEMPERATURA de siempre — apagado/Auto/
+        # calor/frio — y se queda tal cual pase lo que pase con el reposo
+        # inteligente. dry/fan_only son ordenes que el reposo inteligente
+        # (ver `_smart_idle_action`) manda DIRECTAS al climate.* delegado
+        # que las soporte, sin que el modo de ESTA zona cambie nunca —
+        # para el usuario, la zona sigue "en Auto" aunque por debajo el
+        # equipo este ventilando o deshumidificando. Antes se ofrecian
+        # tambien como modo seleccionable a mano de esta zona; se quito
+        # porque sacaba a la zona de Auto solo por pedirle al equipo que
+        # ventile/deshumidifique, perdiendo la gestion de temperatura
+        # mientras tanto.
         modes = [HVACMode.OFF]
         if {"heat", "cool"} <= capability:
             modes.append(HVACMode.HEAT_COOL)
@@ -275,9 +284,6 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             modes.append(HVACMode.HEAT)
         if "cool" in capability:
             modes.append(HVACMode.COOL)
-        for hvac_mode, name in _PASSTHROUGH_MODES.items():
-            if name in capability:
-                modes.append(hvac_mode)
         self._attr_hvac_modes = modes
 
         features = ClimateEntityFeature.PRESET_MODE
@@ -330,7 +336,6 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         los actuadores de verdad pueden dar."""
         return {
             HVACMode.HEAT: "heat", HVACMode.COOL: "cool", HVACMode.HEAT_COOL: "heat_cool",
-            **_PASSTHROUGH_MODES,
         }.get(self._attr_hvac_mode, "none")
 
     # ------------------------------------------------------- ciclo vida ----
@@ -465,24 +470,32 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             return None
 
     def _smart_idle_action(self) -> tuple[str, str | None]:
-        """Reposo INTELIGENTE, opcional y desactivado por defecto (ver
-        CONF_AUTO_FAN_IDLE/CONF_AUTO_DRY_HUMIDITY en const.py — no cambia
-        nada en una zona existente hasta que el usuario lo activa a
-        proposito). Solo se llama cuando el motor YA decidio "idle" (dentro
-        de margen, ni calor ni frio hacen falta): en vez de apagar del
-        todo, un climate.* delegado que TAMBIEN sepa deshumidificar o solo
-        ventilar (segun `_last_full_capability`, detectado en vivo — nunca
+        """Reposo INTELIGENTE — sin interruptor propio: coexiste solo con
+        el modo mas automatico que tenga la zona (Auto en una zona con
+        calor y frio de verdad; el unico modo que le queda a una zona de
+        un solo sentido, que ya es "lo mas automatico" que puede ofrecer,
+        ver la llamada en `_async_decide_and_act`). No hace falta un
+        toggle aparte: si la zona ya esta dejando que el motor decida sola
+        entre todo lo que tiene disponible, usar tambien dry/fan_only
+        cuando el delegado los soporte es la misma idea, no una nueva.
+
+        Solo se llama cuando el motor YA decidio "idle" (dentro de margen,
+        ni calor ni frio hacen falta): en vez de apagar del todo, un
+        climate.* delegado que TAMBIEN sepa deshumidificar o solo ventilar
+        (segun `_last_full_capability`, detectado en vivo — nunca
         declarado a mano) puede aprovecharse. Deshumidificar tiene
         prioridad sobre ventilar: responde a un problema medido (humedad
-        por encima del umbral configurado), no solo a comodidad. Ninguno
-        de los dos persigue nunca una temperatura ni sustituye a calor/frio
-        cuando de verdad hacen falta."""
-        if self.zone.get(CONF_AUTO_DRY_HUMIDITY) and "dry" in self._last_full_capability:
+        por encima del umbral configurado — ese umbral SI es configurable,
+        ver CONF_DRY_HUMIDITY_THRESHOLD), no solo a comodidad. Ninguno de
+        los dos persigue nunca una temperatura ni sustituye a calor/frio
+        cuando de verdad hacen falta, y ninguno cambia el hvac_mode de
+        esta zona — solo la orden que recibe el delegado."""
+        if "dry" in self._last_full_capability:
             humidity = self._read_humidity_now()
             threshold = float(self.zone.get(CONF_DRY_HUMIDITY_THRESHOLD, DEFAULT_DRY_HUMIDITY_THRESHOLD))
             if humidity is not None and humidity >= threshold:
                 return "dry", f"humedad {humidity:.0f}% ≥ {threshold:.0f}%: deshumidificando en vez de apagar"
-        if self.zone.get(CONF_AUTO_FAN_IDLE) and "fan_only" in self._last_full_capability:
+        if "fan_only" in self._last_full_capability:
             return "fan_only", "dentro de margen: ventilando en vez de apagar del todo"
         return "idle", None
 
@@ -606,15 +619,6 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             # inmediata y la zona retoma el calculo normal ella sola, sin
             # nada especial que "reactivar".
             force_off = True
-        elif self._attr_hvac_mode in _PASSTHROUGH_MODES:
-            # Modos que no persiguen ninguna temperatura (dry/fan_only,
-            # ver cabecera del modulo y _PASSTHROUGH_MODES): eleccion
-            # directa del usuario desde el termostato, nunca algo que el
-            # scheduler decida. Se relegan tal cual a quien de verdad los
-            # soporte en `_async_execute`/`_drive_climate_actuator`.
-            action = _PASSTHROUGH_MODES[self._attr_hvac_mode]
-            heat_target = cool_target = None
-            self._reason = f"modo {action} fijado a mano desde el termostato"
         else:
             heat_target, cool_target = preset_heat, preset_cool
             action, decide_reason = scheduler.decide_action(
@@ -627,10 +631,16 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 idle_loss_coeff=self._thermal_model.get("idle_loss_coeff", 0.0),
             )
             self._reason = f"{preset_reason} — {decide_reason}"
-            if action == "idle":
+            if action == "idle" and self._attr_hvac_mode == self._default_hvac_mode(self._last_full_capability):
                 # Ya esta dentro de margen: en vez de apagar sin mas, ver
-                # si el reposo inteligente (opcional) tiene algo mejor que
-                # hacer con lo que de verdad hay conectado.
+                # si el reposo inteligente tiene algo mejor que hacer con
+                # lo que de verdad hay conectado. Solo coexiste con el modo
+                # mas automatico de la zona (Auto si tiene calor y frio de
+                # verdad; el unico modo que le queda a una de un solo
+                # sentido) — si el usuario bloqueo la zona a mano a "solo
+                # calor" en una zona que tambien tiene frio, esta claro que
+                # quiere control manual, no que el motor decida nada mas
+                # por su cuenta.
                 smart_action, smart_reason = self._smart_idle_action()
                 if smart_reason:
                     action = smart_action

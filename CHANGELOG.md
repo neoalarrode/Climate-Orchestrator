@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0
+
+- **Reconocimiento de modos hvac más allá de calor/frío**: hasta ahora
+  solo se detectaba `heat`/`cool` de cada `climate.*` delegado. Si tu aire
+  acondicionado también declara `dry` (deshumidificar) o `fan_only` (solo
+  ventilador) en sus propios `hvac_modes`, la zona los hereda igual — un
+  radiador que solo sepa `off`/`heat` sigue sin aportar nada más. Se
+  eligen a mano desde la tarjeta del termostato como cualquier otro modo;
+  no persiguen ninguna temperatura, se relegan directos al equipo que de
+  verdad los soporte.
+- **Nuevo: reposo inteligente (opcional, desactivado por defecto)**. En
+  vez de apagar del todo cuando la zona ya está dentro de margen (ni hace
+  falta calor ni frío), un `climate.*` delegado que también sepa ventilar
+  o deshumidificar puede usarse solo: ventilar por comodidad, o
+  deshumidificar si la humedad medida supera un umbral — configurable,
+  igual que cualquier otro límite de la zona. Ninguno de los dos sustituye
+  nunca a calor/frío cuando de verdad hacen falta. Se activa por zona en
+  "Configurar" → nuevas opciones "Reposo inteligente".
+
 ## 0.2.6
 
 - Corregido: al abrirse una puerta/ventana, la zona pasaba a "idle" pero

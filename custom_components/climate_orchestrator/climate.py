@@ -37,6 +37,18 @@ elijas otro preset o vuelvas a "Automático" (ver presets.py).
 
 Tampoco hay "capacidad" (calor/frio/ambos) declarada a mano: se DEDUCE en
 vivo de los actuadores de verdad configurados (ver `_refresh_hvac_modes`).
+Y no se limita a calor/frio: si un climate.* delegado declara TAMBIEN
+"dry" o "fan_only" en sus propios hvac_modes (p.ej. un aire acondicionado
+con deshumidificacion o solo ventilador), esta zona los hereda igual — un
+radiador que solo sepa "off"/"heat" simplemente no los aporta. Elegirlos a
+mano desde el termostato los relega directos al equipo, sin pasar por
+ninguna consigna de temperatura (ver `_PASSTHROUGH_MODES`); ademas, un
+"reposo inteligente" opcional (desactivado por defecto, ver
+CONF_AUTO_FAN_IDLE/CONF_AUTO_DRY_HUMIDITY en const.py) puede usarlos EL
+SOLO en vez de apagar del todo cuando la zona ya esta dentro de margen —
+ventilar por comodidad, o deshumidificar si la humedad medida supera un
+umbral configurable — sin que sustituyan nunca a calor/frio cuando de
+verdad hacen falta (ver `_smart_idle_action`).
 """
 
 from __future__ import annotations
@@ -58,14 +70,18 @@ from homeassistant.util import dt as dt_util, slugify
 
 from . import outdoor, presets as presets_module, scheduler, thermal_model
 from .const import (
+    CONF_AUTO_DRY_HUMIDITY,
+    CONF_AUTO_FAN_IDLE,
     CONF_CLIMATE_ENTITIES,
     CONF_COOL_SWITCHES,
     CONF_CURRENT_TEMP_SENSOR,
     CONF_DEADBAND,
     CONF_DOOR_WINDOW_ENTITIES,
+    CONF_DRY_HUMIDITY_THRESHOLD,
     CONF_FORECAST_REFRESH_MINUTES,
     CONF_HEAT_SWITCHES,
     CONF_HISTORY_DAYS_FOR_INERTIA,
+    CONF_HUMIDITY_SENSOR,
     CONF_MAX_TEMP,
     CONF_MIN_OFF_SECONDS,
     CONF_MIN_ON_SECONDS,
@@ -79,6 +95,7 @@ from .const import (
     CONF_SIMULATE,
     CONF_WEATHER_ENTITY,
     DEFAULT_DEADBAND,
+    DEFAULT_DRY_HUMIDITY_THRESHOLD,
     DEFAULT_FORECAST_REFRESH_MINUTES,
     DEFAULT_HISTORY_DAYS_FOR_INERTIA,
     DEFAULT_MAX_TEMP,
@@ -91,7 +108,17 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-_ACTION_MAP = {"heat": HVACAction.HEATING, "cool": HVACAction.COOLING, "idle": HVACAction.IDLE}
+_ACTION_MAP = {
+    "heat": HVACAction.HEATING, "cool": HVACAction.COOLING, "idle": HVACAction.IDLE,
+    "dry": HVACAction.DRYING, "fan_only": HVACAction.FAN,
+}
+
+# Modos que NO se deciden solos por temperatura (no hay "consigna" que
+# perseguir): el usuario los elige a mano desde el termostato y se relegan
+# directos a quien de verdad los soporte (ver `_async_execute_passthrough_mode`).
+# Nunca los propone el motor de decision ni son el modo por defecto al
+# arrancar — a diferencia de calor/frio/Auto, que si se auto-seleccionan.
+_PASSTHROUGH_MODES = {HVACMode.DRY: "dry", HVACMode.FAN_ONLY: "fan_only"}
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
@@ -120,6 +147,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         )
 
         self._attr_hvac_modes = [HVACMode.OFF]  # se recalcula de verdad justo abajo y en cada refresco
+        self._last_full_capability: set[str] = set()  # ver _refresh_hvac_modes / _smart_idle_action
         capability = self._refresh_hvac_modes()
         # Si en ESTE instante (construccion de la entidad) no se detecta
         # ningun actuador, lo mas probable es que sea una carrera de
@@ -180,10 +208,14 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     def _compute_capability(self) -> set[str]:
         """Que puede hacer esta zona DE VERDAD, a partir de los actuadores
         declarados — nunca una eleccion manual (ver const.py y la cabecera
-        de este modulo). Un switch aporta lo que se le haya asignado
-        (heat_switches/cool_switches); un climate.* delegado aporta lo que
-        digan SUS PROPIOS `hvac_modes`, leidos en vivo del estado actual de
-        esa entidad."""
+        de este modulo). Un switch solo entiende encendido/apagado, asi que
+        solo puede aportar heat/cool (segun en que lista este); un
+        climate.* delegado aporta el conjunto COMPLETO de SUS PROPIOS
+        `hvac_modes`, leidos en vivo del estado actual de esa entidad — no
+        solo heat/cool: si un aire acondicionado declara tambien "dry" o
+        "fan_only", esta zona los hereda igual (ver `_refresh_hvac_modes` y
+        `_PASSTHROUGH_MODES`); un radiador que solo declare "off"/"heat" no
+        aporta nada mas que eso."""
         capability: set[str] = set()
         if self.zone.get(CONF_HEAT_SWITCHES):
             capability.add("heat")
@@ -192,43 +224,58 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         for entity_id in self.zone.get(CONF_CLIMATE_ENTITIES) or []:
             state = self.hass.states.get(entity_id)
             supported = (state.attributes.get("hvac_modes") if state else None) or []
-            if "heat" in supported:
-                capability.add("heat")
-            if "cool" in supported:
-                capability.add("cool")
+            for mode in ("heat", "cool", *_PASSTHROUGH_MODES.values()):
+                if mode in supported:
+                    capability.add(mode)
         return capability
 
     def _refresh_hvac_modes(self) -> set[str]:
         """Recalcula `_attr_hvac_modes` (y las features soportadas) a
         partir de la capacidad real actual. Una zona con calor Y frio
-        expone los CUATRO modos estandar: apagado, "Auto" (HVACMode.
-        HEAT_COOL, el System Mode Auto de Matter — doble consigna, baja de
-        calor y alta de frio, decide sola cual toca), y tambien calor y
-        frio por separado por si quieres bloquear la zona a mano a uno
-        solo. Una zona de un solo sentido expone solo ese modo (mas
-        apagado). Se llama al crear la entidad y en cada refresco de
-        previsión — por si un climate.* delegado todavia no estaba
-        disponible al arrancar HA, o cambia de capacidad tras un reload de
-        su propia integracion (ver tambien `_capability_pending`, mas
-        abajo, para el caso de que ESTA entidad se cree antes de que el
-        actuador delegado este listo)."""
+        expone los CUATRO modos estandar de temperatura: apagado, "Auto"
+        (HVACMode.HEAT_COOL, el System Mode Auto de Matter — doble
+        consigna, baja de calor y alta de frio, decide sola cual toca), y
+        tambien calor y frio por separado por si quieres bloquear la zona
+        a mano a uno solo. Una zona de un solo sentido expone solo ese modo
+        (mas apagado).
+
+        Ademas — y esto es lo que generaliza el reconocimiento mas alla de
+        calor/frio — si algun climate.* delegado declara tambien "dry" o
+        "fan_only" en sus PROPIOS hvac_modes, esta zona los añade tal
+        cual: no son modos que el motor de decision persiga con una
+        temperatura, son eleccion directa del usuario (ver
+        `_PASSTHROUGH_MODES` y el reposo inteligente opcional en
+        `_smart_idle_action`). Un switch nunca aporta dry/fan_only (no
+        tiene forma de hacerlo); un radiador con solo "off"/"heat" nunca
+        los expone tampoco.
+
+        Se llama al crear la entidad y en cada refresco de previsión — por
+        si un climate.* delegado todavia no estaba disponible al arrancar
+        HA, o cambia de capacidad tras un reload de su propia integracion
+        (ver tambien `_capability_pending`, mas abajo, para el caso de que
+        ESTA entidad se cree antes de que el actuador delegado este
+        listo)."""
         capability = self._compute_capability()
+        self._last_full_capability = capability
+
+        modes = [HVACMode.OFF]
         if {"heat", "cool"} <= capability:
-            self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT_COOL, HVACMode.HEAT, HVACMode.COOL]
-            self._attr_supported_features = (
-                ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-                | ClimateEntityFeature.TARGET_TEMPERATURE
-                | ClimateEntityFeature.PRESET_MODE
-            )
-        elif "cool" in capability:
-            self._attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL]
-            self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
-        elif "heat" in capability:
-            self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
-            self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
-        else:
-            self._attr_hvac_modes = [HVACMode.OFF]
-            self._attr_supported_features = ClimateEntityFeature.PRESET_MODE
+            modes.append(HVACMode.HEAT_COOL)
+        if "heat" in capability:
+            modes.append(HVACMode.HEAT)
+        if "cool" in capability:
+            modes.append(HVACMode.COOL)
+        for hvac_mode, name in _PASSTHROUGH_MODES.items():
+            if name in capability:
+                modes.append(hvac_mode)
+        self._attr_hvac_modes = modes
+
+        features = ClimateEntityFeature.PRESET_MODE
+        if {"heat", "cool"} <= capability:
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+        if ("heat" in capability) or ("cool" in capability):
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE
+        self._attr_supported_features = features
         return capability
 
     def _reconcile_hvac_mode(self, capability: set[str]) -> None:
@@ -263,6 +310,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         los actuadores de verdad pueden dar."""
         return {
             HVACMode.HEAT: "heat", HVACMode.COOL: "cool", HVACMode.HEAT_COOL: "heat_cool",
+            **_PASSTHROUGH_MODES,
         }.get(self._attr_hvac_mode, "none")
 
     # ------------------------------------------------------- ciclo vida ----
@@ -382,6 +430,40 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             known.append(state.state in ("on", "home"))
         return any(known) if known else None
 
+    def _read_humidity_now(self) -> float | None:
+        sensor = self.zone.get(CONF_HUMIDITY_SENSOR)
+        if not sensor:
+            return None
+        state = self.hass.states.get(sensor)
+        if state is None or state.state in ("unknown", "unavailable"):
+            return None
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
+
+    def _smart_idle_action(self) -> tuple[str, str | None]:
+        """Reposo INTELIGENTE, opcional y desactivado por defecto (ver
+        CONF_AUTO_FAN_IDLE/CONF_AUTO_DRY_HUMIDITY en const.py — no cambia
+        nada en una zona existente hasta que el usuario lo activa a
+        proposito). Solo se llama cuando el motor YA decidio "idle" (dentro
+        de margen, ni calor ni frio hacen falta): en vez de apagar del
+        todo, un climate.* delegado que TAMBIEN sepa deshumidificar o solo
+        ventilar (segun `_last_full_capability`, detectado en vivo — nunca
+        declarado a mano) puede aprovecharse. Deshumidificar tiene
+        prioridad sobre ventilar: responde a un problema medido (humedad
+        por encima del umbral configurado), no solo a comodidad. Ninguno
+        de los dos persigue nunca una temperatura ni sustituye a calor/frio
+        cuando de verdad hacen falta."""
+        if self.zone.get(CONF_AUTO_DRY_HUMIDITY) and "dry" in self._last_full_capability:
+            humidity = self._read_humidity_now()
+            threshold = float(self.zone.get(CONF_DRY_HUMIDITY_THRESHOLD, DEFAULT_DRY_HUMIDITY_THRESHOLD))
+            if humidity is not None and humidity >= threshold:
+                return "dry", f"humedad {humidity:.0f}% ≥ {threshold:.0f}%: deshumidificando en vez de apagar"
+        if self.zone.get(CONF_AUTO_FAN_IDLE) and "fan_only" in self._last_full_capability:
+            return "fan_only", "dentro de margen: ventilando en vez de apagar del todo"
+        return "idle", None
+
     def _door_window_open(self) -> bool:
         for e in self.zone.get(CONF_DOOR_WINDOW_ENTITIES) or []:
             state = self.hass.states.get(e)
@@ -500,6 +582,15 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             # inmediata y la zona retoma el calculo normal ella sola, sin
             # nada especial que "reactivar".
             force_off = True
+        elif self._attr_hvac_mode in _PASSTHROUGH_MODES:
+            # Modos que no persiguen ninguna temperatura (dry/fan_only,
+            # ver cabecera del modulo y _PASSTHROUGH_MODES): eleccion
+            # directa del usuario desde el termostato, nunca algo que el
+            # scheduler decida. Se relegan tal cual a quien de verdad los
+            # soporte en `_async_execute`/`_drive_climate_actuator`.
+            action = _PASSTHROUGH_MODES[self._attr_hvac_mode]
+            heat_target = cool_target = None
+            self._reason = f"modo {action} fijado a mano desde el termostato"
         else:
             heat_target, cool_target = preset_heat, preset_cool
             action, decide_reason = scheduler.decide_action(
@@ -512,6 +603,14 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 idle_loss_coeff=self._thermal_model.get("idle_loss_coeff", 0.0),
             )
             self._reason = f"{preset_reason} — {decide_reason}"
+            if action == "idle":
+                # Ya esta dentro de margen: en vez de apagar sin mas, ver
+                # si el reposo inteligente (opcional) tiene algo mejor que
+                # hacer con lo que de verdad hay conectado.
+                smart_action, smart_reason = self._smart_idle_action()
+                if smart_reason:
+                    action = smart_action
+                    self._reason += f" — {smart_reason}"
 
         self._update_target_attrs(heat_target, cool_target)
         target_for_actuator = heat_target if action == "heat" else cool_target if action == "cool" else (heat_target or cool_target)
@@ -534,25 +633,29 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     async def _async_execute(self, action: str, target_temp: float | None, capability: str, force_off: bool = False) -> str:
         """Ejecuta la decision sobre TODOS los actuadores declarados —
         tantos como se quiera de cada tipo (ver const.py). `action` ya
-        viene decidido como uno solo ("heat"/"cool"/"idle") por
-        scheduler.py, asi que nunca se manda calor y frio a la vez.
+        viene decidido como uno solo ("heat"/"cool"/"dry"/"fan_only"/
+        "idle") por scheduler.py, el reposo inteligente opcional, o el
+        modo fijado a mano, asi que nunca se manda mas de una cosa a la
+        vez.
 
         `force_off`: salta el anti-ciclado de los switches (ver
         `_drive_switch`) — solo lo usa el aviso de puerta/ventana abierta,
         que es urgente de verdad; un "idle" normal (dentro de margen) sigue
         respetando el tiempo minimo encendido.
 
-        Cada climate.* delegado se gobierna por SUS PROPIOS `hvac_modes`
-        (consultados en vivo, ver `_drive_climate_actuator`) — un equipo
-        reversible (soporta heat Y cool) recibe una unica orden con el
-        modo que toque cada vez; uno de un solo sentido simplemente se
-        ignora cuando toca el otro.
+        Los switches SOLO entienden calor/frio (un switch no tiene forma
+        de ventilar o deshumidificar) — con "dry"/"fan_only" simplemente
+        se apagan. Cada climate.* delegado se gobierna por SUS PROPIOS
+        `hvac_modes` (consultados en vivo, ver `_drive_climate_actuator`)
+        — recibe una unica orden con el modo que toque cada vez; el que no
+        lo soporte se ignora sin mas.
 
         Devuelve la accion REAL resultante — en modo switch puede no
         coincidir con `action` si el anti-ciclado todavia no deja cambiar
         de estado."""
         simulate = bool(self.zone.get(CONF_SIMULATE, True))
         real_heat = real_cool = False
+        real_other: str | None = None
         target_temp = target_temp if target_temp is not None else self._attr_current_temperature or 20.0
 
         if capability in ("heat", "heat_cool"):
@@ -571,31 +674,38 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 real_heat = True
             elif result == "cool":
                 real_cool = True
+            elif result in ("dry", "fan_only"):
+                real_other = result
 
         if real_heat:
             return "heat"
         if real_cool:
             return "cool"
+        if real_other:
+            return real_other
         return "idle"
 
     async def _drive_climate_actuator(self, entity_id: str, action: str, target_temp: float, simulate: bool) -> str:
         """Consulta los `hvac_modes` NATIVOS de este climate.* delegado
         (nunca una declaracion nuestra) para saber si puede hacer lo que
-        hace falta ahora ("heat"/"cool"). Si puede, se le manda ese modo +
-        la temperatura; si no, se le manda "off" (si lo soporta) y se deja
-        en paz — asi un equipo reversible se activa solo en su modo
-        correcto sin ninguna deteccion especial, y uno de un solo sentido
-        se ignora sin mas cuando toca el otro."""
+        hace falta ahora ("heat"/"cool"/"dry"/"fan_only"). Si puede, se le
+        manda ese modo — con temperatura solo para heat/cool, ya que
+        dry/fan_only no persiguen ninguna consigna —; si no, se le manda
+        "off" (si lo soporta) y se deja en paz — asi un equipo con varias
+        capacidades se activa solo en la que corresponda sin ninguna
+        deteccion especial, y el que no soporte el modo que toca se ignora
+        sin mas."""
         state = self.hass.states.get(entity_id)
         supported = list((state.attributes.get("hvac_modes") if state else None) or [])
-        can_do = action in ("heat", "cool") and action in supported
+        can_do = action in ("heat", "cool", "dry", "fan_only") and action in supported
 
         if can_do:
             if not simulate:
                 await self.hass.services.async_call(
                     "climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": action}, blocking=False)
-                await self.hass.services.async_call(
-                    "climate", "set_temperature", {"entity_id": entity_id, "temperature": target_temp}, blocking=False)
+                if action in ("heat", "cool"):
+                    await self.hass.services.async_call(
+                        "climate", "set_temperature", {"entity_id": entity_id, "temperature": target_temp}, blocking=False)
             return action
 
         if not simulate and "off" in supported and state is not None and state.state != "off":

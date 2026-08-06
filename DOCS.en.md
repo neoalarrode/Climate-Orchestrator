@@ -50,7 +50,9 @@ each (you can combine all three in the same zone):
   pump), it gets whichever is correct each time — a single command,
   never two stepping on each other. **There are no separate "climate for
   heat" / "climate for cool" fields** — it's the SAME list, and each
-  entity contributes whatever it can actually do.
+  entity contributes whatever it can actually do. This isn't limited to
+  heat/cool: if the device also declares `dry` (dehumidify) or `fan_only`
+  (fan only), this zone inherits those too — see point 9.
 - **Heating switches** and **cooling switches**: unlike a `climate.*`, a
   switch can't self-report what it's for, so these do go in their
   matching list. The integration turns them on/off with hysteresis and
@@ -85,7 +87,7 @@ with nobody home, never above 30°C in summer". Also minimum on/off times
 
 **Step 7 — Presence, doors/windows and options**: presence entities,
 door/window sensors, history days for thermal inertia, forecast refresh
-interval, and simulation mode.
+interval, smart idle (optional, see point 10), and simulation mode.
 
 ## 4. Presence: the room's PHYSICAL sensors, not "home"
 
@@ -169,14 +171,44 @@ those modes separately. A single-direction zone (heat only, or cool
 only) still exposes just that one mode — "Auto" wouldn't make sense
 there.
 
-## 10. Safety limits
+## 10. `dry`/`fan_only` modes and smart idle
+
+A delegated `climate.*` can declare more than heat/cool in its own
+`hvac_modes` — many air conditioners also support `dry` (dehumidify) or
+`fan_only` (fan only). Climate Orchestrator detects those the same way as
+heat/cool — live, never by hand — and this zone adds them to the
+thermostat's available modes. A radiator that only declares `off`/`heat`
+still contributes neither.
+
+- **By hand**: picking "Dry" or "Fan only" from the thermostat card (or
+  Google Home/Alexa/Matter) sends that command straight to whichever
+  device supports it — it doesn't chase any temperature, it's a direct
+  choice of yours, as standing as any other mode.
+- **Smart idle, automatic and OPTIONAL** (off by default — doesn't
+  change anything on an existing zone until you turn it on): instead of
+  turning off completely once the zone is already within margin (no heat
+  or cool needed), the device can make itself useful:
+  - **Fan on idle**: turn on "Smart idle: use fan instead of turning off"
+    (wizard step 7, or "Configure") if you'd rather circulate air than
+    shut off entirely.
+  - **Automatic dehumidifying**: turn on "Smart idle: use dry mode above
+    the humidity threshold" and set the threshold (%, 65% by default) —
+    also needs a humidity sensor declared in step 2. If measured humidity
+    goes over it while the zone is idle, it dehumidifies instead of
+    turning off; this takes priority over fan mode, since it responds to
+    something measured, not just comfort.
+
+Neither ever replaces heat/cool when they're genuinely needed — they only
+decide what to do while the zone is already idle.
+
+## 11. Safety limits
 
 Configurable per zone (wizard step 6): a minimum that heating always
 respects and a maximum that cooling always respects, no matter the active
 preset, presence, or manual mode. Built exactly for "I don't care if
 nobody's home, never below X in winter / never above X in summer".
 
-## 11. Mode vs. preset vs. temperature
+## 12. Mode vs. preset vs. temperature
 
 None of these expire on their own anymore — all three are **standing**
 choices, each restored across restarts:
@@ -188,7 +220,7 @@ choices, each restored across restarts:
   switches the zone to the "Manual" preset (see point 5) — it keeps that
   temperature until you switch to another preset yourself.
 
-## 12. Learned thermal inertia
+## 13. Learned thermal inertia
 
 Learned from both actuator types, not just switches: a plain `switch.*`
 uses its own on/off history directly; a delegated `climate.*` uses the
@@ -198,7 +230,7 @@ never does, that zone simply keeps conservative defaults (flagged
 `thermal_model_reliable: false` in the entity's attributes) — never a
 made-up number.
 
-## 13. Simulation mode
+## 14. Simulation mode
 
 With "Simulation mode" on for a zone (default), the integration computes
 and publishes what it would do (visible in the entity's attributes), but

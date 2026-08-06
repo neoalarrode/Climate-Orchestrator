@@ -73,6 +73,24 @@ CONF_MIN_ON_SECONDS = "min_on_seconds"
 CONF_MIN_OFF_SECONDS = "min_off_seconds"
 CONF_PRIORITY = "priority"                     # "confort" | "ahorro" | "manual"
 
+# Reposo INTELIGENTE, opcional (desactivado por defecto — no cambia el
+# comportamiento de ninguna zona existente sin que el usuario lo active a
+# proposito): en vez de simplemente apagar cuando ya se esta dentro de
+# margen (ni hace falta calor ni frio), un climate.* delegado que TAMBIEN
+# sepa deshumidificar o solo ventilar (detectado en vivo, ver
+# `_compute_capability` en climate.py — nunca declarado a mano) puede
+# aprovecharse. Deshumidificar tiene prioridad sobre ventilar: responde a
+# un problema medido (humedad alta), no solo a comodidad. Ninguno de los
+# dos decide nunca una temperatura ni sustituye a calor/frio cuando de
+# verdad hacen falta — solo cambian que hacer mientras la zona ya esta en
+# reposo. El umbral de humedad es configurable por zona, igual que
+# cualquier otro limite (ver CONF_MIN_TEMP/CONF_MAX_TEMP) — nunca un
+# numero fijo en el codigo.
+CONF_AUTO_FAN_IDLE = "auto_fan_idle"
+CONF_AUTO_DRY_HUMIDITY = "auto_dry_humidity"
+CONF_DRY_HUMIDITY_THRESHOLD = "dry_humidity_threshold"
+DEFAULT_DRY_HUMIDITY_THRESHOLD = 65.0
+
 # Sensores de PRESENCIA FISICA de la propia zona (PIR, mmWave, radar de
 # presencia...) — "¿hay alguien AHORA MISMO en esta habitacion?", no "¿esta
 # alguien en casa?". Un binary_sensor de ocupacion/movimiento de la

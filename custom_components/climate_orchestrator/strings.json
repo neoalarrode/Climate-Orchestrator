@@ -61,6 +61,9 @@
           "door_window_entities": "Door/window sensors (pauses instantly when open)",
           "history_days_for_inertia": "History days for thermal inertia",
           "forecast_refresh_minutes": "Forecast refresh interval",
+          "auto_fan_idle": "Smart idle: use fan instead of turning off (if the actuator supports it)",
+          "auto_dry_humidity": "Smart idle: use dry mode above the humidity threshold (if the actuator supports it)",
+          "dry_humidity_threshold": "Humidity threshold for dry mode",
           "simulate": "Simulation mode (never touches real actuators)"
         }
       }
@@ -95,6 +98,9 @@
           "door_window_entities": "Door/window sensors (pauses instantly when open)",
           "history_days_for_inertia": "History days for thermal inertia",
           "forecast_refresh_minutes": "Forecast refresh interval",
+          "auto_fan_idle": "Smart idle: use fan instead of turning off (if the actuator supports it)",
+          "auto_dry_humidity": "Smart idle: use dry mode above the humidity threshold (if the actuator supports it)",
+          "dry_humidity_threshold": "Humidity threshold for dry mode",
           "simulate": "Simulation mode (never touches real actuators)"
         }
       }

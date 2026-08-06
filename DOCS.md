@@ -52,7 +52,10 @@ verdad de cada uno (puedes combinar los tres tipos en la misma zona):
   verdad (una bomba de calor reversible), se le manda el que corresponda
   cada vez — una única orden, nunca dos que se pisen. **No hay campos
   separados de "climate para calor" y "climate para frío"**: es la MISMA
-  lista, y cada entidad aporta lo que de verdad sepa hacer.
+  lista, y cada entidad aporta lo que de verdad sepa hacer. Esto no se
+  limita a calor/frío: si el equipo declara también `dry`
+  (deshumidificar) o `fan_only` (solo ventilador), la zona los hereda
+  igual — ver punto 9.
 - **Switches de calefacción** y **switches de refrigeración**: a
   diferencia de un `climate.*`, un switch no puede autodeclarar para qué
   sirve, así que estos sí van en su lista correspondiente. La integración
@@ -88,7 +91,8 @@ tipo switch).
 
 **Paso 7 — Presencia, puertas/ventanas y opciones**: entidades de
 presencia, sensores de puerta/ventana, días de histórico para la inercia térmica, frecuencia de
-recálculo de la previsión, y modo simulación.
+recálculo de la previsión, reposo inteligente (opcional, ver punto 10) y
+modo simulación.
 
 ## 4. Presencia: sensores FÍSICOS de la habitación, no "en casa"
 
@@ -177,7 +181,37 @@ invierno), sigues pudiendo elegir esos modos por separado. Una zona de un
 solo sentido (solo calor, o solo frío) sigue ofreciendo únicamente ese
 modo — "Auto" no tendría sentido ahí.
 
-## 10. Límites de seguridad
+## 10. Modos `dry`/`fan_only` y reposo inteligente
+
+Un `climate.*` delegado puede declarar en sus propios `hvac_modes` algo
+más que calor/frío: por ejemplo, muchos aires acondicionados también
+soportan `dry` (deshumidificar) o `fan_only` (solo ventilador). Climate
+Orchestrator los detecta igual que calor/frío — en vivo, nunca a mano — y
+esta zona los añade a los modos disponibles del termostato. Un radiador
+que solo declare `off`/`heat` sigue sin aportar ninguno de los dos.
+
+- **A mano**: elegir "Deshumidificar" o "Solo ventilador" desde la
+  tarjeta del termostato (o Google Home/Alexa/Matter) manda esa orden tal
+  cual al equipo que la soporte — no persigue ninguna temperatura, es una
+  elección directa tuya, tan persistente como cualquier otro modo.
+- **Reposo inteligente, automático y OPCIONAL** (desactivado por
+  defecto — no cambia nada en una zona existente hasta que lo actives):
+  en vez de apagar del todo cuando la zona ya está dentro de margen (ni
+  hace falta calor ni frío), el equipo puede aprovecharse él solo:
+  - **Ventilar en reposo**: activa "Reposo inteligente: ventilar en vez
+    de apagar" (paso 7 del asistente, o "Configurar") si prefieres que
+    circule el aire en vez de apagarse del todo.
+  - **Deshumidificar automáticamente**: activa "Reposo inteligente:
+    deshumidificar por encima del umbral de humedad" y configura el
+    umbral (%, por defecto 65%) — necesita además un sensor de humedad
+    declarado en el paso 2. Si la humedad medida lo supera mientras la
+    zona está en reposo, deshumidifica en vez de apagar; tiene prioridad
+    sobre ventilar, porque responde a algo medido, no solo a comodidad.
+
+Ninguno de los dos sustituye nunca a calor/frío cuando de verdad hacen
+falta — solo deciden qué hacer mientras la zona ya está en reposo.
+
+## 11. Límites de seguridad
 
 Configurables por zona (paso 6 del asistente): un mínimo que la
 calefacción siempre respeta y un máximo que la refrigeración siempre
@@ -185,7 +219,7 @@ respeta, sea cual sea el preset activo, la presencia o el modo manual.
 Pensado exactamente para "no me importa que no haya nadie, nunca por
 debajo de X en invierno / nunca por encima de X en verano".
 
-## 11. Modo vs. preset vs. temperatura
+## 12. Modo vs. preset vs. temperatura
 
 Aquí ya no hay ninguna anulación con caducidad — los tres son elecciones
 **persistentes**, cada una se restaura sola tras un reinicio:
@@ -198,7 +232,7 @@ Aquí ya no hay ninguna anulación con caducidad — los tres son elecciones
   termostato: pasa la zona al preset "Manual" (ver punto 5) — se queda
   con esa temperatura hasta que tú mismo cambies a otro preset.
 
-## 12. Inercia térmica aprendida
+## 13. Inercia térmica aprendida
 
 Se aprende de los dos tipos de actuador, no solo de switch: con un
 `switch.*` propio se usa directamente su historial de encendido/apagado;
@@ -209,7 +243,7 @@ reporta, esa zona se queda con valores conservadores por defecto (marcado
 `thermal_model_reliable: false` en los atributos de la entidad) — nunca
 se inventa una cifra.
 
-## 13. Modo simulación
+## 14. Modo simulación
 
 Con "Modo simulación" activo en una zona (por defecto), la integración
 calcula y publica lo que haría (visible en los atributos de la entidad),

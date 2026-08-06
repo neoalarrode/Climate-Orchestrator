@@ -15,12 +15,15 @@ from homeassistant.helpers import selector
 
 from . import presets as presets_module
 from .const import (
+    CONF_AUTO_DRY_HUMIDITY,
+    CONF_AUTO_FAN_IDLE,
     CONF_AWAY_PRESET,
     CONF_CLIMATE_ENTITIES,
     CONF_COOL_SWITCHES,
     CONF_CURRENT_TEMP_SENSOR,
     CONF_DEADBAND,
     CONF_DOOR_WINDOW_ENTITIES,
+    CONF_DRY_HUMIDITY_THRESHOLD,
     CONF_FORECAST_REFRESH_MINUTES,
     CONF_HEAT_SWITCHES,
     CONF_HISTORY_DAYS_FOR_INERTIA,
@@ -37,6 +40,7 @@ from .const import (
     CONF_SIMULATE,
     CONF_WEATHER_ENTITY,
     DEFAULT_DEADBAND,
+    DEFAULT_DRY_HUMIDITY_THRESHOLD,
     DEFAULT_FORECAST_REFRESH_MINUTES,
     DEFAULT_HISTORY_DAYS_FOR_INERTIA,
     DEFAULT_MAX_TEMP,
@@ -82,6 +86,10 @@ def _temp_number():
 
 def _seconds_number():
     return selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=3600, step=30, mode=selector.NumberSelectorMode.BOX))
+
+
+def _percent_number():
+    return selector.NumberSelector(selector.NumberSelectorConfig(min=30, max=90, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="%"))
 
 
 def _preset_names_selector(names: list[str]):
@@ -221,12 +229,19 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días")),
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=DEFAULT_FORECAST_REFRESH_MINUTES): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
+            vol.Optional(CONF_AUTO_FAN_IDLE, default=False): selector.BooleanSelector(),
+            vol.Optional(CONF_AUTO_DRY_HUMIDITY, default=False): selector.BooleanSelector(),
+            vol.Optional(CONF_DRY_HUMIDITY_THRESHOLD, default=DEFAULT_DRY_HUMIDITY_THRESHOLD): _percent_number(),
             vol.Optional(CONF_SIMULATE, default=True): selector.BooleanSelector(),
         })
         return self.async_show_form(step_id="options", data_schema=schema, description_placeholders={
             "presence_note": "Pensado para sensores de presencia FÍSICA de esta habitación (PIR, mmWave, radar de presencia...), "
                               "no solo \"en casa\": binary_sensor de ocupación/movimiento es la señal principal. "
-                              "person./device_tracker. también se aceptan, como señal adicional."
+                              "person./device_tracker. también se aceptan, como señal adicional.",
+            "smart_idle_note": "Reposo inteligente (opcional, desactivado por defecto): en vez de apagar del todo cuando ya no "
+                                "hace falta calor ni frío, un climate.* delegado que también sepa ventilar o deshumidificar puede "
+                                "usarse — solo si el equipo lo soporta de verdad. Deshumidificar solo se activa si además hay un "
+                                "sensor de humedad configurado (paso Sensores) y su lectura supera el umbral elegido."
         })
 
     @staticmethod
@@ -289,6 +304,9 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
                 selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días")),
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=current.get(CONF_FORECAST_REFRESH_MINUTES, DEFAULT_FORECAST_REFRESH_MINUTES)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
+            vol.Optional(CONF_AUTO_FAN_IDLE, default=current.get(CONF_AUTO_FAN_IDLE, False)): selector.BooleanSelector(),
+            vol.Optional(CONF_AUTO_DRY_HUMIDITY, default=current.get(CONF_AUTO_DRY_HUMIDITY, False)): selector.BooleanSelector(),
+            vol.Optional(CONF_DRY_HUMIDITY_THRESHOLD, default=current.get(CONF_DRY_HUMIDITY_THRESHOLD, DEFAULT_DRY_HUMIDITY_THRESHOLD)): _percent_number(),
             vol.Optional(CONF_SIMULATE, default=current.get(CONF_SIMULATE, True)): selector.BooleanSelector(),
         }
         return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)

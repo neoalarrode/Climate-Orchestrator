@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.0
+
+**Nuevo: corrección de desviación del sensor en climate.\* delegados.**
+Un aire acondicionado o válvula termostática decide él solo cuándo darse
+por satisfecho según su propio sensor interno, que casi nunca coincide
+con el sensor externo de la zona (ubicación, calibración...). Ahora, en
+cada ciclo, se mide esa desviación en vivo y se corrige la consigna real
+antes de mandársela al delegado — así se satisface justo cuando el
+sensor externo (el que de verdad gobierna la zona) también lo haría,
+recortada al rango que el propio delegado admite. Sin desviación
+detectable (el delegado no reporta su propia temperatura, o el sensor
+externo no está disponible), se manda la consigna real sin tocar.
+
+- Nuevo atributo `delegate_temperature_deviations` en la entidad de la
+  zona: la desviación medida ahora mismo por cada `climate.*` delegado,
+  para poder revisarla.
+- Sin configuración nueva que ajustar — se aplica sola, con
+  degradación segura si no hay datos suficientes.
+
 ## 0.4.1
 
 Corrección sobre la 0.4.0: se me fue la mano quitando `dry`/`fan_only`

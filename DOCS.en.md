@@ -232,7 +232,33 @@ respects and a maximum that cooling always respects, no matter the active
 preset, presence, or manual mode. Built exactly for "I don't care if
 nobody's home, never below X in winter / never above X in summer".
 
-## 12. Mode vs. preset vs. temperature
+## 12. Sensor deviation on delegated climate.\*
+
+A delegated `climate.*` (an air conditioner, a thermostatic valve...)
+decides on its own when it's satisfied based on **its own internal
+sensor** — which almost never matches exactly the external sensor you
+declared for the zone (step 2): by location, calibration, or simply by
+being inside the device itself, it typically reads differently than a
+wall sensor. If it were sent the real setpoint as-is, the delegate could
+consider itself satisfied before or after the external sensor — the one
+that actually governs this zone — reaches that temperature.
+
+Climate Orchestrator corrects this every cycle: it measures the
+deviation RIGHT NOW between the delegate's own sensor (its
+`current_temperature` attribute) and the zone's external sensor, and
+adds it to the real setpoint before sending it — so the delegate
+considers itself satisfied exactly when the external sensor would too,
+always clamped to the range the delegate itself accepts (its own
+`min_temp`/`max_temp`) so it's never asked for something outside what it
+supports. Recalculated every time (the deviation isn't constant — it
+varies while heating/cooling is actually running) and visible in the
+zone entity's `delegate_temperature_deviations` attribute, one per
+delegated `climate.*`. With no detectable deviation — the delegate
+doesn't report its own `current_temperature`, or the external sensor
+isn't available right now — the real setpoint is sent unmodified, never
+a made-up correction.
+
+## 13. Mode vs. preset vs. temperature
 
 None of these expire on their own anymore — all three are **standing**
 choices, each restored across restarts:
@@ -244,7 +270,7 @@ choices, each restored across restarts:
   switches the zone to the "Manual" preset (see point 5) — it keeps that
   temperature until you switch to another preset yourself.
 
-## 13. Learned thermal inertia
+## 14. Learned thermal inertia
 
 Learned from both actuator types, not just switches: a plain `switch.*`
 uses its own on/off history directly; a delegated `climate.*` uses the
@@ -254,7 +280,7 @@ never does, that zone simply keeps conservative defaults (flagged
 `thermal_model_reliable: false` in the entity's attributes) — never a
 made-up number.
 
-## 14. Simulation mode
+## 15. Simulation mode
 
 With "Simulation mode" on for a zone (default), the integration computes
 and publishes what it would do (visible in the entity's attributes), but

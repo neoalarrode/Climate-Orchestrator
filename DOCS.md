@@ -245,7 +245,34 @@ respeta, sea cual sea el preset activo, la presencia o el modo manual.
 Pensado exactamente para "no me importa que no haya nadie, nunca por
 debajo de X en invierno / nunca por encima de X en verano".
 
-## 12. Modo vs. preset vs. temperatura
+## 12. Desviación del sensor en climate.\* delegados
+
+Un `climate.*` delegado (un aire acondicionado, una válvula
+termostática...) decide él solo cuándo darse por satisfecho según **su
+propio sensor interno** — que casi nunca coincide exactamente con el
+sensor externo que declaraste para la zona (paso 2): por ubicación,
+calibración o simplemente por estar dentro del propio aparato, suele
+leer distinto que un sensor de pared. Si se le mandara la consigna real
+tal cual, el delegado podría darse por satisfecho antes o después de que
+el sensor externo — el que de verdad gobierna esta zona — llegue a esa
+temperatura.
+
+Climate Orchestrator lo corrige en cada ciclo: mide la desviación AHORA
+MISMO entre el sensor propio del delegado (su atributo
+`current_temperature`) y el sensor externo de la zona, y se la suma a la
+consigna real antes de mandársela — así el delegado se da por
+satisfecho justo cuando el sensor externo también lo haría, recortada
+siempre al rango que el propio delegado admite (`min_temp`/`max_temp`
+suyos) para no pedirle nunca algo fuera de lo que acepta. Se recalcula
+cada vez (la desviación no es constante: varía con la propia
+calefacción/refrigeración en marcha) y queda visible en el atributo
+`delegate_temperature_deviations` de la entidad de la zona, uno por cada
+`climate.*` delegado. Sin desviación detectable — el delegado no reporta
+su propia `current_temperature`, o el sensor externo no está disponible
+ahora mismo — se manda la consigna real sin tocar, nunca se inventa una
+corrección.
+
+## 13. Modo vs. preset vs. temperatura
 
 Aquí ya no hay ninguna anulación con caducidad — los tres son elecciones
 **persistentes**, cada una se restaura sola tras un reinicio:
@@ -258,7 +285,7 @@ Aquí ya no hay ninguna anulación con caducidad — los tres son elecciones
   termostato: pasa la zona al preset "Manual" (ver punto 5) — se queda
   con esa temperatura hasta que tú mismo cambies a otro preset.
 
-## 13. Inercia térmica aprendida
+## 14. Inercia térmica aprendida
 
 Se aprende de los dos tipos de actuador, no solo de switch: con un
 `switch.*` propio se usa directamente su historial de encendido/apagado;
@@ -269,7 +296,7 @@ reporta, esa zona se queda con valores conservadores por defecto (marcado
 `thermal_model_reliable: false` en los atributos de la entidad) — nunca
 se inventa una cifra.
 
-## 14. Modo simulación
+## 15. Modo simulación
 
 Con "Modo simulación" activo en una zona (por defecto), la integración
 calcula y publica lo que haría (visible en los atributos de la entidad),

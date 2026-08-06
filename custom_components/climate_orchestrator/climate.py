@@ -196,6 +196,12 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
         self._switch_last_change: dict[str, tuple[str, object]] = {}
 
+        # Desviacion medida AHORA MISMO entre el sensor propio de cada
+        # climate.* delegado y el sensor externo de la zona — ver
+        # `_compensate_delegate_target`. Se expone tal cual en
+        # extra_state_attributes para poder revisarla.
+        self._delegate_deviations: dict[str, float] = {}
+
         # Ultimo modo hvac activo (no "apagado") — lo usa async_turn_on
         # (ver TURN_ON/TURN_OFF en _refresh_hvac_modes) para volver
         # exactamente a donde estaba la zona, no a un generico "Auto": si
@@ -218,6 +224,12 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             "heating_rate_deg_h": round(self._thermal_model.get("heating_rate_deg_h", 0) or 0, 2),
             "cooling_rate_deg_h": round(self._thermal_model.get("cooling_rate_deg_h", 0) or 0, 2),
             "outdoor_now": self._outdoor_now,
+            # Desviacion AHORA MISMO entre el sensor propio de cada climate.*
+            # delegado y el sensor externo de la zona (positiva = el
+            # delegado lee mas caliente que el sensor externo) — ver
+            # `_compensate_delegate_target`. Vacio si no hay delegados, o si
+            # ninguno reporta su propia current_temperature.
+            "delegate_temperature_deviations": dict(self._delegate_deviations),
         }
 
     # ---------------------------------------------------- capacidad real ----
@@ -660,7 +672,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
         self._update_target_attrs(heat_target, cool_target)
         target_for_actuator = heat_target if action == "heat" else cool_target if action == "cool" else (heat_target or cool_target)
-        real_action = await self._async_execute(action, target_for_actuator, capability, force_off=force_off)
+        real_action = await self._async_execute(action, target_for_actuator, capability, current_temp, force_off=force_off)
         # HVACAction.OFF (apagado de verdad, el modo elegido es "apagado")
         # es DISTINTO de HVACAction.IDLE (encendida, dentro de margen, sin
         # nada que hacer ahora mismo) — HA y cualquier puente Matter/
@@ -682,13 +694,18 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
     # ------------------------------------------------------ actuadores ----
 
-    async def _async_execute(self, action: str, target_temp: float | None, capability: str, force_off: bool = False) -> str:
+    async def _async_execute(
+        self, action: str, target_temp: float | None, capability: str, current_temp: float | None, force_off: bool = False
+    ) -> str:
         """Ejecuta la decision sobre TODOS los actuadores declarados —
         tantos como se quiera de cada tipo (ver const.py). `action` ya
         viene decidido como uno solo ("heat"/"cool"/"dry"/"fan_only"/
         "idle") por scheduler.py, el reposo inteligente opcional, o el
         modo fijado a mano, asi que nunca se manda mas de una cosa a la
-        vez.
+        vez. `current_temp` es la lectura del sensor EXTERNO de la zona
+        (el que de verdad gobierna la decision) — se pasa a los climate.*
+        delegados para compensar la desviacion frente a su propio sensor
+        interno, ver `_compensate_delegate_target`.
 
         `force_off`: salta el anti-ciclado de los switches (ver
         `_drive_switch`) — solo lo usa el aviso de puerta/ventana abierta,
@@ -721,7 +738,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                     real_cool = True
 
         for entity_id in self.zone.get(CONF_CLIMATE_ENTITIES) or []:
-            result = await self._drive_climate_actuator(entity_id, action, target_temp, simulate)
+            result = await self._drive_climate_actuator(entity_id, action, target_temp, current_temp, simulate)
             if result == "heat":
                 real_heat = True
             elif result == "cool":
@@ -737,16 +754,20 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             return real_other
         return "idle"
 
-    async def _drive_climate_actuator(self, entity_id: str, action: str, target_temp: float, simulate: bool) -> str:
+    async def _drive_climate_actuator(
+        self, entity_id: str, action: str, target_temp: float, current_temp: float | None, simulate: bool
+    ) -> str:
         """Consulta los `hvac_modes` NATIVOS de este climate.* delegado
         (nunca una declaracion nuestra) para saber si puede hacer lo que
         hace falta ahora ("heat"/"cool"/"dry"/"fan_only"). Si puede, se le
-        manda ese modo — con temperatura solo para heat/cool, ya que
-        dry/fan_only no persiguen ninguna consigna —; si no, se le manda
-        "off" (si lo soporta) y se deja en paz — asi un equipo con varias
-        capacidades se activa solo en la que corresponda sin ninguna
-        deteccion especial, y el que no soporte el modo que toca se ignora
-        sin mas."""
+        manda ese modo — con temperatura solo para heat/cool, corregida
+        segun la desviacion medida frente al sensor externo de la zona
+        (ver `_compensate_delegate_target`), ya que dry/fan_only no
+        persiguen ninguna consigna —; si no, se le manda "off" (si lo
+        soporta) y se deja en paz — asi un equipo con varias capacidades
+        se activa solo en la que corresponda sin ninguna deteccion
+        especial, y el que no soporte el modo que toca se ignora sin
+        mas."""
         state = self.hass.states.get(entity_id)
         supported = list((state.attributes.get("hvac_modes") if state else None) or [])
         can_do = action in ("heat", "cool", "dry", "fan_only") and action in supported
@@ -756,13 +777,66 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 await self.hass.services.async_call(
                     "climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": action}, blocking=False)
                 if action in ("heat", "cool"):
+                    compensated = self._compensate_delegate_target(entity_id, state, target_temp, current_temp)
                     await self.hass.services.async_call(
-                        "climate", "set_temperature", {"entity_id": entity_id, "temperature": target_temp}, blocking=False)
+                        "climate", "set_temperature", {"entity_id": entity_id, "temperature": compensated}, blocking=False)
+            else:
+                # En simulacion no se manda nada real, pero se calcula y
+                # guarda igual la desviacion — asi el atributo de
+                # diagnostico es fiable desde el primer dia, sin esperar a
+                # desactivar el modo simulacion para verla por primera vez.
+                self._compensate_delegate_target(entity_id, state, target_temp, current_temp)
             return action
 
         if not simulate and "off" in supported and state is not None and state.state != "off":
             await self.hass.services.async_call("climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": "off"}, blocking=False)
         return "idle"
+
+    def _compensate_delegate_target(
+        self, entity_id: str, state, target_temp: float, current_temp: float | None
+    ) -> float:
+        """El climate.* delegado decide EL SOLO cuando se da por
+        satisfecho, segun SU PROPIO sensor interno — que casi nunca
+        coincide exactamente con el sensor externo configurado para la
+        zona (el de un aire acondicionado, por ubicacion/calibracion,
+        suele leer distinto que un sensor de pared). Si se le mandara la
+        consigna real tal cual, el delegado podria darse por satisfecho
+        antes o despues de que el sensor externo — el que de verdad
+        gobierna esta zona — llegue a esa temperatura.
+
+        Se corrige sumando a la consigna la desviacion medida AHORA MISMO
+        entre los dos sensores, recalculada cada ciclo (no es constante:
+        varia con la propia calefaccion/refrigeracion en marcha) y
+        recortada al rango real que admite el delegado (`min_temp`/
+        `max_temp` propios, si los declara) para no mandarle nunca algo
+        fuera de lo que acepta. Sin desviacion detectable — el delegado no
+        reporta su propia `current_temperature`, o el sensor externo no
+        esta disponible ahora mismo — se manda la consigna real sin
+        tocar, nunca se inventa una correccion. La desviacion calculada
+        queda visible en el atributo `delegate_temperature_deviations`
+        para poder revisarla."""
+        delegate_temp = state.attributes.get("current_temperature") if state else None
+        if delegate_temp is None or current_temp is None:
+            self._delegate_deviations.pop(entity_id, None)
+            return target_temp
+        try:
+            deviation = float(delegate_temp) - float(current_temp)
+        except (TypeError, ValueError):
+            self._delegate_deviations.pop(entity_id, None)
+            return target_temp
+
+        self._delegate_deviations[entity_id] = round(deviation, 2)
+        compensated = target_temp + deviation
+        min_t = state.attributes.get("min_temp")
+        max_t = state.attributes.get("max_temp")
+        try:
+            if min_t is not None:
+                compensated = max(compensated, float(min_t))
+            if max_t is not None:
+                compensated = min(compensated, float(max_t))
+        except (TypeError, ValueError):
+            pass
+        return compensated
 
     async def _drive_switch(self, entity_id: str, desired_on: bool, simulate: bool, force: bool = False) -> bool:
         """Aplica anti-ciclado (tiempo minimo encendido/apagado) y, si

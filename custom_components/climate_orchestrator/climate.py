@@ -242,6 +242,14 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             "heating_rate_deg_h": round(self._thermal_model.get("heating_rate_deg_h", 0) or 0, 2),
             "cooling_rate_deg_h": round(self._thermal_model.get("cooling_rate_deg_h", 0) or 0, 2),
             "outdoor_now": self._outdoor_now,
+            # Previsión exterior tal cual la usa el motor para anticipar
+            # (ver scheduler.py, ANTICIPATE_LOOKAHEAD_HOURS) — hora a hora
+            # empezando por la actual. Visible para poder comprobar que de
+            # verdad hay una previsión real entrando (no plana/constante):
+            # sin weather_entity configurada, y sin sensor exterior propio
+            # con histórico, se degrada a un valor constante — ver punto 8
+            # de DOCS.md.
+            "outdoor_forecast": [round(t, 1) for t in self._outdoor_forecast] if self._outdoor_forecast else [],
             # Desviacion AHORA MISMO entre el sensor propio de cada climate.*
             # delegado y el sensor externo de la zona (positiva = el
             # delegado lee mas caliente que el sensor externo) — ver

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+
+- Nuevo atributo `outdoor_forecast` en la entidad de la zona: la
+  previsión exterior hora a hora tal cual la usa el motor de
+  anticipación (`scheduler.py`), para poder comprobar de verdad si está
+  entrando una previsión real o una degradada a valor constante (ver
+  punto 8 de la guía).
+
 ## 0.6.0
 
 - **Corrección de desviación confirmada como continua y en vivo**: ya lo

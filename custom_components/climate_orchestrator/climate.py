@@ -480,6 +480,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             preset_heat = self._preset_value(preset_name, "heat") if wants_heat else None
             preset_cool = self._preset_value(preset_name, "cool") if wants_cool else None
 
+        force_off = False
         if self._attr_hvac_mode == HVACMode.OFF:
             action = "idle"
             heat_target, cool_target = preset_heat, preset_cool
@@ -488,6 +489,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             action = "idle"
             heat_target, cool_target = preset_heat, preset_cool
             self._reason = "puerta/ventana abierta: en pausa"
+            # A diferencia de un "idle" normal (que si respeta el
+            # anti-ciclado: no urge, solo esta dentro de margen), una
+            # puerta/ventana abierta SI es urgente: cortar de verdad ya,
+            # sin esperar al tiempo minimo encendido (`min_on_seconds`) —
+            # si no, un radiador que se acababa de encender se quedaba
+            # calentando con la ventana abierta hasta agotar ese margen.
+            # Al cerrarse, la propia entidad esta en la lista de sensores
+            # escuchados (ver async_added_to_hass): dispara una reevaluacion
+            # inmediata y la zona retoma el calculo normal ella sola, sin
+            # nada especial que "reactivar".
+            force_off = True
         else:
             heat_target, cool_target = preset_heat, preset_cool
             action, decide_reason = scheduler.decide_action(
@@ -503,7 +515,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
         self._update_target_attrs(heat_target, cool_target)
         target_for_actuator = heat_target if action == "heat" else cool_target if action == "cool" else (heat_target or cool_target)
-        real_action = await self._async_execute(action, target_for_actuator, capability)
+        real_action = await self._async_execute(action, target_for_actuator, capability, force_off=force_off)
         self._attr_hvac_action = _ACTION_MAP.get(real_action, HVACAction.IDLE)
         self.async_write_ha_state()
 
@@ -519,11 +531,16 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
     # ------------------------------------------------------ actuadores ----
 
-    async def _async_execute(self, action: str, target_temp: float | None, capability: str) -> str:
+    async def _async_execute(self, action: str, target_temp: float | None, capability: str, force_off: bool = False) -> str:
         """Ejecuta la decision sobre TODOS los actuadores declarados —
         tantos como se quiera de cada tipo (ver const.py). `action` ya
         viene decidido como uno solo ("heat"/"cool"/"idle") por
         scheduler.py, asi que nunca se manda calor y frio a la vez.
+
+        `force_off`: salta el anti-ciclado de los switches (ver
+        `_drive_switch`) — solo lo usa el aviso de puerta/ventana abierta,
+        que es urgente de verdad; un "idle" normal (dentro de margen) sigue
+        respetando el tiempo minimo encendido.
 
         Cada climate.* delegado se gobierna por SUS PROPIOS `hvac_modes`
         (consultados en vivo, ver `_drive_climate_actuator`) — un equipo
@@ -540,12 +557,12 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
         if capability in ("heat", "heat_cool"):
             for sw in self.zone.get(CONF_HEAT_SWITCHES) or []:
-                if await self._drive_switch(sw, action == "heat", simulate):
+                if await self._drive_switch(sw, action == "heat", simulate, force=force_off):
                     real_heat = True
 
         if capability in ("cool", "heat_cool"):
             for sw in self.zone.get(CONF_COOL_SWITCHES) or []:
-                if await self._drive_switch(sw, action == "cool", simulate):
+                if await self._drive_switch(sw, action == "cool", simulate, force=force_off):
                     real_cool = True
 
         for entity_id in self.zone.get(CONF_CLIMATE_ENTITIES) or []:
@@ -585,10 +602,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             await self.hass.services.async_call("climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": "off"}, blocking=False)
         return "idle"
 
-    async def _drive_switch(self, entity_id: str, desired_on: bool, simulate: bool) -> bool:
+    async def _drive_switch(self, entity_id: str, desired_on: bool, simulate: bool, force: bool = False) -> bool:
         """Aplica anti-ciclado (tiempo minimo encendido/apagado) y, si
         procede, enciende/apaga de verdad. Devuelve si el switch queda
-        REALMENTE encendido tras esta llamada."""
+        REALMENTE encendido tras esta llamada.
+
+        `force=True` (solo lo usa el aviso de puerta/ventana abierta, ver
+        `_async_decide_and_act`) salta el anti-ciclado por completo: es
+        una parada urgente, no un simple "esta dentro de margen, no
+        merece la pena tocarlo" — sin esto, un radiador que se acababa de
+        encender se quedaba calentando con la ventana abierta hasta
+        agotar el tiempo minimo encendido configurado."""
         state = self.hass.states.get(entity_id)
         current_on = state is not None and state.state == "on"
         now = dt_util.utcnow()
@@ -598,7 +622,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             return current_on
 
         last_state, last_change = self._switch_last_change.get(entity_id, (None, None))
-        if last_change is not None:
+        if not force and last_change is not None:
             min_seconds = self.zone.get(CONF_MIN_ON_SECONDS, DEFAULT_MIN_ON_SECONDS) if last_state == "on" \
                 else self.zone.get(CONF_MIN_OFF_SECONDS, DEFAULT_MIN_OFF_SECONDS)
             if (now - last_change).total_seconds() < min_seconds:

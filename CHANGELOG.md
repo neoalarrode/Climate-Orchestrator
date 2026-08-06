@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.6
+
+- Corregido: al abrirse una puerta/ventana, la zona pasaba a "idle" pero
+  el apagado real del switch de calor/frío seguía respetando el
+  anti-ciclado normal (tiempo mínimo encendido, 300s por defecto) — un
+  radiador que se acababa de encender se quedaba calentando con la
+  ventana abierta hasta agotar ese margen. Ahora el aviso de
+  puerta/ventana salta el anti-ciclado por completo: corta ya. Al
+  cerrarse, la zona retoma el cálculo normal sola (la propia entidad ya
+  estaba en la lista de sensores escuchados, sin cambios ahí).
+
 ## 0.2.5
 
 - **Nuevo preset "Manual"**: ajustar la temperatura directamente desde la

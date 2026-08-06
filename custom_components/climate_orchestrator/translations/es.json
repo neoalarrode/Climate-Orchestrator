@@ -59,7 +59,6 @@
         "data": {
           "presence_entities": "Entidades de presencia",
           "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
-          "manual_override_hours": "Duración de la anulación manual de temperatura",
           "history_days_for_inertia": "Días de histórico para la inercia térmica",
           "forecast_refresh_minutes": "Frecuencia de recálculo de la previsión",
           "simulate": "Modo simulación (nunca toca actuadores reales)"
@@ -94,7 +93,6 @@
           "min_off_seconds": "Tiempo mínimo apagado (s)",
           "presence_entities": "Entidades de presencia",
           "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
-          "manual_override_hours": "Duración de la anulación manual de temperatura",
           "history_days_for_inertia": "Días de histórico para la inercia térmica",
           "forecast_refresh_minutes": "Frecuencia de recálculo de la previsión",
           "simulate": "Modo simulación (nunca toca actuadores reales)"

@@ -29,9 +29,11 @@ ofreciendo unicamente ese modo — "Auto" no tendria sentido ahi.
 
 El PRESET activo es una eleccion PERSISTENTE del usuario — se restaura
 sola tras un reinicio via RestoreEntity, igual que cualquier otro
-termostato de HA. La TEMPERATURA objetivo, en cambio, es una anulacion
-TEMPORAL con caducidad (`manual_override_hours`): pasado ese tiempo, la
-zona vuelve sola al preset activo.
+termostato de HA. Ajustar la TEMPERATURA directamente desde la tarjeta
+del termostato (en vez de elegir un preset) NO es una anulacion temporal
+con caducidad: cambia el preset activo a "Manual" — tan persistente como
+cualquier otro preset, se queda con esa temperatura hasta que tu mismo
+elijas otro preset o vuelvas a "Automático" (ver presets.py).
 
 Tampoco hay "capacidad" (calor/frio/ambos) declarada a mano: se DEDUCE en
 vivo de los actuadores de verdad configurados (ver `_refresh_hvac_modes`).
@@ -50,7 +52,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_point_in_time, async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util, slugify
 
@@ -64,7 +66,6 @@ from .const import (
     CONF_FORECAST_REFRESH_MINUTES,
     CONF_HEAT_SWITCHES,
     CONF_HISTORY_DAYS_FOR_INERTIA,
-    CONF_MANUAL_OVERRIDE_HOURS,
     CONF_MAX_TEMP,
     CONF_MIN_OFF_SECONDS,
     CONF_MIN_ON_SECONDS,
@@ -80,7 +81,6 @@ from .const import (
     DEFAULT_DEADBAND,
     DEFAULT_FORECAST_REFRESH_MINUTES,
     DEFAULT_HISTORY_DAYS_FOR_INERTIA,
-    DEFAULT_MANUAL_OVERRIDE_HOURS,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_OFF_SECONDS,
     DEFAULT_MIN_ON_SECONDS,
@@ -131,7 +131,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             self._presets = presets_module.parse_presets(self.zone.get(CONF_PRESETS_TEXT, ""))
         except ValueError:
             self._presets = []
-        self._attr_preset_modes = [presets_module.PRESET_AUTO] + [p["name"] for p in self._presets]
+        self._attr_preset_modes = [presets_module.PRESET_AUTO, presets_module.PRESET_MANUAL] + [p["name"] for p in self._presets]
         self._attr_preset_mode = presets_module.PRESET_AUTO
 
         self._attr_min_temp = float(self.zone.get(CONF_MIN_TEMP, DEFAULT_MIN_TEMP))
@@ -150,10 +150,13 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._reason = "sin calcular todavia"
         self._active_preset_name: str | None = None
 
-        self._temp_override_heat: float | None = None
-        self._temp_override_cool: float | None = None
-        self._temp_override_until = None
-        self._unsub_override_expiry = None
+        # Consignas del preset "Manual" (ver presets.py) — a diferencia de
+        # los demas presets, no viven en una entidad number.*: se ponen
+        # directamente desde la tarjeta del termostato (async_set_temperature)
+        # y se guardan aqui mismo, persistentes, restauradas tras un
+        # reinicio igual que el resto (ver async_added_to_hass).
+        self._manual_heat: float | None = None
+        self._manual_cool: float | None = None
 
         self._switch_last_change: dict[str, tuple[str, object]] = {}
 
@@ -170,7 +173,6 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             "heating_rate_deg_h": round(self._thermal_model.get("heating_rate_deg_h", 0) or 0, 2),
             "cooling_rate_deg_h": round(self._thermal_model.get("cooling_rate_deg_h", 0) or 0, 2),
             "outdoor_now": self._outdoor_now,
-            "manual_override_until": self._temp_override_until.isoformat() if self._temp_override_until else None,
         }
 
     # ---------------------------------------------------- capacidad real ----
@@ -293,6 +295,27 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             last_preset = last_state.attributes.get("preset_mode")
             if last_preset in (self._attr_preset_modes or []):
                 self._attr_preset_mode = last_preset
+            if last_preset == presets_module.PRESET_MANUAL:
+                # Restaura las consignas que el usuario habia puesto a
+                # mano, del propio estado grabado (attr_target_temperature_
+                # low/high en Auto, o attr_temperature en calor/frio solo).
+                for attr_key, field in ((ATTR_TARGET_TEMP_LOW, "_manual_heat"), (ATTR_TARGET_TEMP_HIGH, "_manual_cool")):
+                    val = last_state.attributes.get(attr_key)
+                    if val is not None:
+                        try:
+                            setattr(self, field, float(val))
+                        except (TypeError, ValueError):
+                            pass
+                single = last_state.attributes.get(ATTR_TEMPERATURE)
+                if single is not None:
+                    try:
+                        single_f = float(single)
+                        if self._attr_hvac_mode == HVACMode.HEAT:
+                            self._manual_heat = single_f
+                        elif self._attr_hvac_mode == HVACMode.COOL:
+                            self._manual_cool = single_f
+                    except (TypeError, ValueError):
+                        pass
 
         watched = [e for e in [
             self.zone.get(CONF_CURRENT_TEMP_SENSOR),
@@ -327,13 +350,6 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
     async def _handle_forecast_refresh(self, now) -> None:
         await self._async_refresh_forecast()
-
-    async def _handle_override_expiry(self, now) -> None:
-        self._temp_override_heat = None
-        self._temp_override_cool = None
-        self._temp_override_until = None
-        self._unsub_override_expiry = None
-        await self._async_decide_and_act()
 
     # ----------------------------------------------------- lecturas HA ----
 
@@ -452,11 +468,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             self._presence_now(),
         )
         self._active_preset_name = preset_name
-        preset_heat = self._preset_value(preset_name, "heat") if wants_heat else None
-        preset_cool = self._preset_value(preset_name, "cool") if wants_cool else None
-
-        now = dt_util.now()
-        override_active = self._temp_override_until is not None and now < self._temp_override_until
+        if preset_name == presets_module.PRESET_MANUAL:
+            # Consignas puestas a mano desde la propia tarjeta del
+            # termostato — persistentes, no una anulacion con caducidad
+            # (ver async_set_temperature). Se tratan igual que cualquier
+            # otro preset de aqui en adelante: mismo scheduler.decide_action,
+            # con su reactivo/anticipacion/limites de seguridad normales.
+            preset_heat = self._manual_heat if wants_heat else None
+            preset_cool = self._manual_cool if wants_cool else None
+        else:
+            preset_heat = self._preset_value(preset_name, "heat") if wants_heat else None
+            preset_cool = self._preset_value(preset_name, "cool") if wants_cool else None
 
         if self._attr_hvac_mode == HVACMode.OFF:
             action = "idle"
@@ -466,20 +488,6 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             action = "idle"
             heat_target, cool_target = preset_heat, preset_cool
             self._reason = "puerta/ventana abierta: en pausa"
-        elif override_active:
-            heat_target = self._temp_override_heat if wants_heat else None
-            cool_target = self._temp_override_cool if wants_cool else None
-            if heat_target is None and wants_heat:
-                heat_target = preset_heat
-            if cool_target is None and wants_cool:
-                cool_target = preset_cool
-            if wants_heat and current_temp < (heat_target or current_temp) - deadband:
-                action = "heat"
-            elif wants_cool and current_temp > (cool_target or current_temp) + deadband:
-                action = "cool"
-            else:
-                action = "idle"
-            self._reason = f"objetivo anulado a mano hasta las {self._temp_override_until.strftime('%H:%M')}"
         else:
             heat_target, cool_target = preset_heat, preset_cool
             action, decide_reason = scheduler.decide_action(
@@ -605,31 +613,39 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     # --------------------------------------------------------- comandos ----
 
     async def async_set_temperature(self, **kwargs) -> None:
+        """Ajustar la temperatura directamente desde la tarjeta del
+        termostato pasa la zona al preset "Manual" — PERSISTENTE, no una
+        anulacion con caducidad (ver presets.py y la cabecera del modulo):
+        se queda con esta consigna hasta que tu mismo elijas otro preset."""
         single = kwargs.get(ATTR_TEMPERATURE)
         low = kwargs.get(ATTR_TARGET_TEMP_LOW)
         high = kwargs.get(ATTR_TARGET_TEMP_HIGH)
         if single is None and low is None and high is None:
             return
 
+        if self._attr_preset_mode != presets_module.PRESET_MANUAL:
+            # Semilla desde lo que estuviera activo justo antes (el preset
+            # saliente), para no dejar sin valor el lado que esta llamada
+            # no toca — p.ej. tocar solo la consigna de calor en Auto no
+            # debe perder la de frio que ya tenia el preset anterior.
+            self._manual_heat = self._attr_target_temperature_low if self._attr_hvac_mode == HVACMode.HEAT_COOL \
+                else (self._attr_target_temperature if self._attr_hvac_mode == HVACMode.HEAT else None)
+            self._manual_cool = self._attr_target_temperature_high if self._attr_hvac_mode == HVACMode.HEAT_COOL \
+                else (self._attr_target_temperature if self._attr_hvac_mode == HVACMode.COOL else None)
+
         if self._attr_hvac_mode == HVACMode.HEAT_COOL:
             if low is not None:
-                self._temp_override_heat = float(low)
+                self._manual_heat = float(low)
             if high is not None:
-                self._temp_override_cool = float(high)
+                self._manual_cool = float(high)
         elif self._attr_hvac_mode == HVACMode.HEAT and single is not None:
-            self._temp_override_heat = float(single)
+            self._manual_heat = float(single)
         elif self._attr_hvac_mode == HVACMode.COOL and single is not None:
-            self._temp_override_cool = float(single)
+            self._manual_cool = float(single)
         else:
             return
 
-        hours = float(self.zone.get(CONF_MANUAL_OVERRIDE_HOURS, DEFAULT_MANUAL_OVERRIDE_HOURS))
-        self._temp_override_until = dt_util.now() + timedelta(hours=hours)
-
-        if self._unsub_override_expiry:
-            self._unsub_override_expiry()
-        self._unsub_override_expiry = async_track_point_in_time(self.hass, self._handle_override_expiry, self._temp_override_until)
-
+        self._attr_preset_mode = presets_module.PRESET_MANUAL
         await self._async_decide_and_act()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
@@ -640,10 +656,9 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         await self._async_decide_and_act()
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Fijar CUALQUIER preset a mano (o "Automático") es una eleccion
-        PERSISTENTE — no caduca sola, se restaura tras un reinicio, igual
-        que el modo hvac. Solo la temperatura objetivo (async_set_temperature)
-        es una anulacion temporal."""
+        """Fijar CUALQUIER preset a mano (incluido "Manual", o
+        "Automático") es una eleccion PERSISTENTE — no caduca sola, se
+        restaura tras un reinicio, igual que el modo hvac."""
         if preset_mode not in (self._attr_preset_modes or []):
             return
         self._attr_preset_mode = preset_mode

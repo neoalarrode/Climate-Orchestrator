@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.5
+
+- **Nuevo preset "Manual"**: ajustar la temperatura directamente desde la
+  tarjeta del termostato (sin elegir ningún preset) ya no es una
+  anulación con caducidad (2h por defecto) — pasa la zona al preset
+  "Manual", tan persistente como cualquier otro: se queda con esa
+  temperatura hasta que tú mismo cambies a otro preset o vuelvas a
+  "Automático". Se restaura tras un reinicio igual que el resto. Quitado
+  el ajuste ahora sin uso "duración de la anulación manual de
+  temperatura" del asistente.
+
 ## 0.2.4
 
 - Regenerado `icon.png`/`icon@2x.png` para cumplir de verdad la

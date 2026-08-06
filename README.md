@@ -89,13 +89,14 @@ hasta 20 segundos". Es la arquitectura correcta para un termostato.
   Home Assistant/Matter/HomeKit exactamente el conjunto estándar
   (`off`/`heat`/`cool`/`heat_cool`) que sus actuadores reales soportan.
   Nunca se activan calor y frío a la vez.
-- **Modo y preset persistentes vs. temperatura como anulación temporal**:
-  cambiar el modo (apagado/auto, o apagado/calor en una zona de un solo
-  sentido) o el preset desde el termostato es una elección que se queda
-  (se restaura tras un reinicio,
-  igual que cualquier termostato real); cambiar la temperatura objetivo es
-  una anulación temporal con caducidad configurable, tras la cual la zona
-  vuelve sola al preset activo.
+- **Modo y preset persistentes, incluido "Manual"**: cambiar el modo
+  (apagado/auto, o apagado/calor en una zona de un solo sentido) o el
+  preset desde el termostato es una elección que se queda (se restaura
+  tras un reinicio, igual que cualquier termostato real). Ajustar la
+  temperatura directamente desde la tarjeta del termostato (sin elegir
+  ningún preset) pasa la zona al preset **"Manual"** — igual de
+  persistente que cualquier otro, se queda con esa temperatura hasta que
+  tú mismo elijas otro preset, no una anulación con caducidad.
 - **Modo simulación** por zona: calcula y muestra lo que haría, sin tocar
   ningún actuador real, hasta que confíes en sus decisiones.
 

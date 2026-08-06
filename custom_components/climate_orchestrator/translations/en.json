@@ -59,7 +59,6 @@
         "data": {
           "presence_entities": "Presence entities",
           "door_window_entities": "Door/window sensors (pauses instantly when open)",
-          "manual_override_hours": "Manual temperature override duration",
           "history_days_for_inertia": "History days for thermal inertia",
           "forecast_refresh_minutes": "Forecast refresh interval",
           "simulate": "Simulation mode (never touches real actuators)"
@@ -94,7 +93,6 @@
           "min_off_seconds": "Minimum OFF time (s)",
           "presence_entities": "Presence entities",
           "door_window_entities": "Door/window sensors (pauses instantly when open)",
-          "manual_override_hours": "Manual temperature override duration",
           "history_days_for_inertia": "History days for thermal inertia",
           "forecast_refresh_minutes": "Forecast refresh interval",
           "simulate": "Simulation mode (never touches real actuators)"

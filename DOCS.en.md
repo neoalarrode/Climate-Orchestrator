@@ -84,8 +84,8 @@ with nobody home, never above 30°C in summer". Also minimum on/off times
 (only relevant with a switch actuator).
 
 **Step 7 — Presence, doors/windows and options**: presence entities,
-door/window sensors, manual temperature override duration, history days
-for thermal inertia, forecast refresh interval, and simulation mode.
+door/window sensors, history days for thermal inertia, forecast refresh
+interval, and simulation mode.
 
 ## 4. Presence: the room's PHYSICAL sensors, not "home"
 
@@ -113,6 +113,14 @@ zone's capability) — e.g. "Comfort (heat)" and "Comfort (cool)". They can
 be adjusted live from Lovelace or your own automation at any time; the
 zone uses the live value of those entities to decide, not the text you
 typed in the wizard (that only created them the first time).
+
+There's one more preset, **"Manual"**, that you don't declare yourself:
+it activates automatically as soon as you adjust the temperature
+directly from the thermostat card (dragging the setpoint, not picking a
+preset). It's just as standing as any other — it keeps that temperature
+until you switch to another preset or back to "Auto" yourself, it doesn't
+expire on its own. It has no `number.*` entity of its own (you set it
+directly on the thermostat), but it's restored across restarts too.
 
 ## 6. Editing a zone
 
@@ -168,16 +176,17 @@ respects and a maximum that cooling always respects, no matter the active
 preset, presence, or manual mode. Built exactly for "I don't care if
 nobody's home, never below X in winter / never above X in summer".
 
-## 11. Mode vs. preset vs. temperature: three different behaviors
+## 11. Mode vs. preset vs. temperature
+
+None of these expire on their own anymore — all three are **standing**
+choices, each restored across restarts:
 
 - **Changing the MODE** (off / auto — or off / heat for a
-  single-direction zone, see point 9) is a choice that **sticks** — it
-  doesn't expire, it's restored across restarts.
-- **Changing the PRESET** (by hand, any of the declared ones) is also
-  **standing** — same as the mode, see point 5.
-- **Changing the target TEMPERATURE** is a **temporary** override: it
-  lasts however long you configured (2h by default) and afterwards the
-  zone returns to the active preset on its own.
+  single-direction zone, see point 9).
+- **Changing the PRESET** by hand, any declared one or "Auto" (see point 5).
+- **Adjusting the TEMPERATURE** directly from the thermostat card:
+  switches the zone to the "Manual" preset (see point 5) — it keeps that
+  temperature until you switch to another preset yourself.
 
 ## 12. Learned thermal inertia
 

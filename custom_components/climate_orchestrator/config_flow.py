@@ -25,7 +25,6 @@ from .const import (
     CONF_HEAT_SWITCHES,
     CONF_HISTORY_DAYS_FOR_INERTIA,
     CONF_HUMIDITY_SENSOR,
-    CONF_MANUAL_OVERRIDE_HOURS,
     CONF_MAX_TEMP,
     CONF_MIN_OFF_SECONDS,
     CONF_MIN_ON_SECONDS,
@@ -40,7 +39,6 @@ from .const import (
     DEFAULT_DEADBAND,
     DEFAULT_FORECAST_REFRESH_MINUTES,
     DEFAULT_HISTORY_DAYS_FOR_INERTIA,
-    DEFAULT_MANUAL_OVERRIDE_HOURS,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_OFF_SECONDS,
     DEFAULT_MIN_ON_SECONDS,
@@ -219,8 +217,6 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_PRESENCE_ENTITIES, default=[]): _entity(
                 ["binary_sensor", "person", "device_tracker"], multiple=True),
             vol.Optional(CONF_DOOR_WINDOW_ENTITIES, default=[]): _entity("binary_sensor", multiple=True),
-            vol.Optional(CONF_MANUAL_OVERRIDE_HOURS, default=DEFAULT_MANUAL_OVERRIDE_HOURS): selector.NumberSelector(
-                selector.NumberSelectorConfig(min=0.5, max=12, step=0.5, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="h")),
             vol.Optional(CONF_HISTORY_DAYS_FOR_INERTIA, default=DEFAULT_HISTORY_DAYS_FOR_INERTIA): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días")),
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=DEFAULT_FORECAST_REFRESH_MINUTES): selector.NumberSelector(
@@ -289,8 +285,6 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(CONF_PRESENCE_ENTITIES, default=current.get(CONF_PRESENCE_ENTITIES, [])): _entity(
                 ["binary_sensor", "person", "device_tracker"], multiple=True),
             vol.Optional(CONF_DOOR_WINDOW_ENTITIES, default=current.get(CONF_DOOR_WINDOW_ENTITIES, [])): _entity("binary_sensor", multiple=True),
-            vol.Optional(CONF_MANUAL_OVERRIDE_HOURS, default=current.get(CONF_MANUAL_OVERRIDE_HOURS, DEFAULT_MANUAL_OVERRIDE_HOURS)): selector.NumberSelector(
-                selector.NumberSelectorConfig(min=0.5, max=12, step=0.5, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="h")),
             vol.Optional(CONF_HISTORY_DAYS_FOR_INERTIA, default=current.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días")),
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=current.get(CONF_FORECAST_REFRESH_MINUTES, DEFAULT_FORECAST_REFRESH_MINUTES)): selector.NumberSelector(

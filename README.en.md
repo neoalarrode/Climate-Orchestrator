@@ -86,13 +86,14 @@ architecture for a thermostat.
   its own what it can do, exposing to Home Assistant/Matter/HomeKit
   exactly the standard set (`off`/`heat`/`cool`/`heat_cool`) its real
   actuators support. Heat and cool are never activated at once.
-- **Standing mode and preset vs. temporary temperature override**:
-  changing the mode (off/auto, or off/heat for a single-direction zone)
-  or the preset from the
-  thermostat is a choice that sticks (restored across restarts, like any
-  real thermostat); changing the target temperature is a temporary
-  override with a configurable expiry, after which the zone returns to
-  the active preset on its own.
+- **Standing mode and preset, including "Manual"**: changing the mode
+  (off/auto, or off/heat for a single-direction zone) or the preset from
+  the thermostat is a choice that sticks (restored across restarts, like
+  any real thermostat). Adjusting the temperature directly from the
+  thermostat card (without picking a preset) switches the zone to the
+  **"Manual"** preset — just as standing as any other, it keeps that
+  temperature until you pick another preset yourself, not a
+  time-limited override.
 - **Per-zone simulation mode**: computes and shows what it would do
   without touching any real actuator, until you trust its decisions.
 

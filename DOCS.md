@@ -87,8 +87,7 @@ los tiempos mínimos de encendido/apagado (solo relevantes con actuador
 tipo switch).
 
 **Paso 7 — Presencia, puertas/ventanas y opciones**: entidades de
-presencia, sensores de puerta/ventana, duración de la anulación manual de
-temperatura, días de histórico para la inercia térmica, frecuencia de
+presencia, sensores de puerta/ventana, días de histórico para la inercia térmica, frecuencia de
 recálculo de la previsión, y modo simulación.
 
 ## 4. Presencia: sensores FÍSICOS de la habitación, no "en casa"
@@ -120,6 +119,14 @@ caliente desde Lovelace o desde una automatización tuya en cualquier
 momento; el valor vivo de esas entidades es lo que usa la zona para
 decidir, no el texto que escribiste en el asistente (ese solo sirvió para
 crearlas la primera vez).
+
+Hay un preset más, **"Manual"**, que no declaras tú: se activa solo en
+cuanto ajustas la temperatura directamente desde la tarjeta del
+termostato (arrastrando la consigna, no eligiendo un preset). Es tan
+persistente como cualquier otro — se queda con esa temperatura hasta que
+tú mismo cambies a otro preset o vuelvas a "Automático", no caduca sola.
+No tiene entidad `number.*` propia (la pones tú directo en el
+termostato), pero se restaura igual tras un reinicio.
 
 ## 6. Editar una zona
 
@@ -178,16 +185,18 @@ respeta, sea cual sea el preset activo, la presencia o el modo manual.
 Pensado exactamente para "no me importa que no haya nadie, nunca por
 debajo de X en invierno / nunca por encima de X en verano".
 
-## 11. Modo vs. preset vs. temperatura: tres comportamientos distintos
+## 11. Modo vs. preset vs. temperatura
+
+Aquí ya no hay ninguna anulación con caducidad — los tres son elecciones
+**persistentes**, cada una se restaura sola tras un reinicio:
 
 - **Cambiar el MODO** (apagado / auto — o apagado / calor en una zona de
-  un solo sentido, ver punto 9) es una elección que se **queda** — no
-  caduca sola, se restaura tras un reinicio.
-- **Cambiar el PRESET** (a mano, cualquiera de los declarados) también es
-  **persistente** — igual que el modo, ver punto 5.
-- **Cambiar la TEMPERATURA** objetivo es una anulación **temporal**: dura
-  lo que hayas configurado (por defecto 2h) y después la zona vuelve sola
-  al preset activo.
+  un solo sentido, ver punto 9).
+- **Cambiar el PRESET** a mano, cualquiera de los declarados o
+  "Automático" (ver punto 5).
+- **Ajustar la TEMPERATURA** directamente desde la tarjeta del
+  termostato: pasa la zona al preset "Manual" (ver punto 5) — se queda
+  con esa temperatura hasta que tú mismo cambies a otro preset.
 
 ## 12. Inercia térmica aprendida
 

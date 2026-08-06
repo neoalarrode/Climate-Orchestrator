@@ -81,7 +81,6 @@ CONF_PRIORITY = "priority"                     # "confort" | "ahorro" | "manual"
 # que NADIE esta en toda la casa), pero no son el caso de uso principal.
 CONF_PRESENCE_ENTITIES = "presence_entities"
 CONF_DOOR_WINDOW_ENTITIES = "door_window_entities"
-CONF_MANUAL_OVERRIDE_HOURS = "manual_override_hours"
 CONF_HISTORY_DAYS_FOR_INERTIA = "history_days_for_inertia"
 CONF_FORECAST_REFRESH_MINUTES = "forecast_refresh_minutes"
 CONF_SIMULATE = "simulate"                     # modo simulacion: calcula y muestra, nunca actua de verdad
@@ -91,7 +90,6 @@ DEFAULT_MIN_TEMP = 15.0
 DEFAULT_MAX_TEMP = 30.0
 DEFAULT_MIN_ON_SECONDS = 300
 DEFAULT_MIN_OFF_SECONDS = 300
-DEFAULT_MANUAL_OVERRIDE_HOURS = 2.0
 DEFAULT_HISTORY_DAYS_FOR_INERTIA = 14
 DEFAULT_FORECAST_REFRESH_MINUTES = 10
 DEFAULT_OUTDOOR_HORIZON_HOURS = 6  # ya no hace falta un horizonte largo (sin horario que anticipar): solo AHORRO_LOOKAHEAD_HOURS de scheduler.py + margen

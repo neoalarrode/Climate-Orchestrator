@@ -27,11 +27,23 @@ solo entre el preset "con presencia" y el "sin presencia" segun la
 presencia real. Elegir CUALQUIER OTRO preset a mano (termostato, voz,
 Google Home, un puente Matter/HomeKit) es una eleccion PERSISTENTE que se
 queda fijada hasta que vuelvas a poner "Automatico" tu mismo.
+
+`PRESET_MANUAL` es un preset especial mas: no lo declaras tu en
+`presets_text` (como "Confort" o "Ausente"), lo activa SOLO climate.py
+cuando ajustas la temperatura directamente desde la tarjeta del
+termostato en vez de elegir un preset — a diferencia de la version
+anterior de esto (una anulacion TEMPORAL de un par de horas), pasar a
+"Manual" es tan persistente como cualquier otro preset: se queda con la
+temperatura que hayas puesto hasta que tu mismo cambies a otro preset o a
+"Automatico". Su valor no vive en una entidad number.* (no tiene sentido,
+lo pones tu directo en el termostato) — climate.py lo guarda como su
+propio estado, restaurado tras un reinicio igual que el resto.
 """
 
 from __future__ import annotations
 
 PRESET_AUTO = "Automático"
+PRESET_MANUAL = "Manual"
 
 
 def parse_presets(text: str) -> list[dict]:
@@ -52,7 +64,7 @@ def parse_presets(text: str) -> list[dict]:
             raise ValueError(f"«{chunk}» no tiene el formato «Nombre: temperatura»")
         name, temps_str = chunk.split(":", 1)
         name = name.strip()
-        if not name or name == PRESET_AUTO:
+        if not name or name in (PRESET_AUTO, PRESET_MANUAL):
             raise ValueError(f"«{name}» no es un nombre de preset valido")
         if name in seen:
             raise ValueError(f"el preset «{name}» esta repetido")
@@ -90,6 +102,9 @@ def resolve_active_preset_name(preset_mode: str, preset_names: list[str], presen
     solo "en casa"), None si no hay ninguno declarado o ninguno da un dato
     fiable ahora mismo.
     """
+    if preset_mode == PRESET_MANUAL:
+        return PRESET_MANUAL, "modo manual: temperatura fijada a mano"
+
     if preset_mode != PRESET_AUTO and preset_mode in preset_names:
         return preset_mode, f"preset «{preset_mode}» fijado a mano"
 

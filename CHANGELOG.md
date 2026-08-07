@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1
+
+- Corregido: la zona no arrancaba — `ImportError: cannot import name
+  'ATTR_HUMIDITY' from 'homeassistant.const'`. `ATTR_HUMIDITY` vive en
+  `homeassistant.components.climate.const` (igual que
+  `ATTR_TARGET_TEMP_LOW`/`HIGH`, ya importados de ahí), no en
+  `homeassistant.const`. Bug introducido en 0.7.0 (humidificación).
+
 ## 0.7.0
 
 - **Nuevo: humidificación**. Una zona puede delegar en entidades

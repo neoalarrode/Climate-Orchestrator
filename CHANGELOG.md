@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.10.2
+- Arreglo: `zone_power_w` (el consumo de la zona, usado por la prevención de sobrecarga `CONF_MAX_POWER_W`, el banco de confort térmico y lo que se comparte con Battery Orchestrator) sumaba también el humidificador — una entidad secundaria de la zona, no parte del calor/frío en sí. Confirmado en producción: una zona mostraba 215W (solo el humidificador aprendido) mientras el aire acondicionado, que era el que de verdad estaba enfriando, todavía no tenía dato propio — dando una cifra real pero engañosa. Ahora el cálculo de consumo de la zona (`_zone_power_w`, `_zone_estimated_power_w`, y el aprendizaje de `power_model.py`) usa solo los actuadores de calor/frío declarados (`heat_switches`/`cool_switches`/`climate_entities`), nunca el humidificador.
+
 ## 0.10.1
 - Nuevo: `CONF_HOME_POWER_SENSOR` (el sensor general de consumo de la casa que usa `power_model.py` para aprender el consumo de cada actuador) ya no hace falta declararlo a mano si Battery Orchestrator está instalado — se detecta automáticamente el que ese addon ya tiene declarado (`sensor.battery_orchestrator_grid_signal`, atributo `home_power_sensor`). El campo declarado a mano sigue teniendo prioridad si existe; sin ninguno de los dos, no se aprende nada, como antes.
 

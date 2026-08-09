@@ -785,6 +785,23 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             + (self.zone.get(CONF_HUMIDIFIER_ENTITIES) or [])
         )
 
+    def _climate_actuators(self) -> list[str]:
+        """Igual que `_all_declared_actuators`, pero SIN el humidificador
+        (CONF_HUMIDIFIER_ENTITIES) — es una entidad secundaria de la zona
+        (ver const.py: "integrada en el funcionamiento normal... nunca
+        sustituye a calor/frio"), no parte del calor/frio en si. Usar la
+        lista completa para el consumo de la zona inflaba `zone_power_w`
+        con el consumo del humidificador aunque el aire acondicionado en
+        si no aportara nada todavia — tanto para la prevencion de
+        sobrecarga (CONF_MAX_POWER_W, pensada para calor/frio) como para
+        lo que se comparte con Battery Orchestrator (ver grid_signal.py de
+        ese addon), lo que importa es solo calor/frio."""
+        return (
+            (self.zone.get(CONF_HEAT_SWITCHES) or [])
+            + (self.zone.get(CONF_COOL_SWITCHES) or [])
+            + (self.zone.get(CONF_CLIMATE_ENTITIES) or [])
+        )
+
     def _actuator_active(self, entity_id: str) -> bool:
         state = self.hass.states.get(entity_id)
         if state is None:
@@ -818,17 +835,18 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         return None, "none"
 
     def _zone_power_w(self) -> tuple[float | None, dict]:
-        """Potencia TOTAL de la zona ahora mismo: suma de cada actuador
-        que este REALMENTE activo (`_actuator_active`), cada uno por su
-        propia fuente (`_actuator_power_w`) — nunca un unico numero de
-        zona como antes, ver CONF_ACTUATOR_POWER. Devuelve (total,
-        desglose) — desglose es {entity_id: {"watts","source"}}, solo de
-        los que de verdad aportan algo. (None, {}) si nada esta activo o
-        no hay ningun dato de potencia disponible."""
+        """Potencia TOTAL de la zona ahora mismo: suma de cada actuador de
+        CALOR/FRIO (nunca el humidificador, ver `_climate_actuators`) que
+        este REALMENTE activo (`_actuator_active`), cada uno por su propia
+        fuente (`_actuator_power_w`) — nunca un unico numero de zona como
+        antes, ver CONF_ACTUATOR_POWER. Devuelve (total, desglose) —
+        desglose es {entity_id: {"watts","source"}}, solo de los que de
+        verdad aportan algo. (None, {}) si nada esta activo o no hay
+        ningun dato de potencia disponible."""
         breakdown: dict[str, dict] = {}
         total = 0.0
         any_known = False
-        for entity_id in self._all_declared_actuators():
+        for entity_id in self._climate_actuators():
             if not self._actuator_active(entity_id):
                 continue
             watts, source = self._actuator_power_w(entity_id)
@@ -848,10 +866,11 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         esta en idle decidiendo si merece la pena arrancar, `_zone_power_w`
         siempre daria None (nada activo todavia). None si ningun actuador
         declarado tiene ni sensor, ni potencia aprendida fiable, ni
-        estimada a mano — nunca se inventa un numero."""
+        estimada a mano — nunca se inventa un numero. Solo calor/frio
+        (ver `_climate_actuators`), nunca el humidificador."""
         total = 0.0
         any_known = False
-        for entity_id in self._all_declared_actuators():
+        for entity_id in self._climate_actuators():
             watts, _source = self._actuator_power_w(entity_id)
             if watts is None:
                 continue
@@ -898,9 +917,10 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         )
 
         # Consumo aprendido (ver power_model.py) — SOLO para los
-        # actuadores que no tengan ni sensor propio ni potencia estimada
-        # declarada (CONF_ACTUATOR_POWER): para esos ya no hace falta
-        # aprender nada, se usan tal cual.
+        # actuadores de CALOR/FRIO (nunca el humidificador, entidad
+        # secundaria — ver `_climate_actuators`) que no tengan ni sensor
+        # propio ni potencia estimada declarada (CONF_ACTUATOR_POWER): para
+        # esos ya no hace falta aprender nada, se usan tal cual.
         #
         # Sensor general de consumo de la casa: el declarado a mano en
         # esta zona (CONF_HOME_POWER_SENSOR) tiene prioridad si existe;
@@ -913,7 +933,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         home_power_sensor = self.zone.get(CONF_HOME_POWER_SENSOR, "") or grid_signal.read(self.hass).get("home_power_sensor") or ""
         actuator_power = self.zone.get(CONF_ACTUATOR_POWER) or {}
         entities_to_learn = [
-            e for e in self._all_declared_actuators()
+            e for e in self._climate_actuators()
             if not actuator_power.get(e, {}).get("sensor") and not actuator_power.get(e, {}).get("estimated_w")
         ]
         self._power_model = await power_model.async_get_power_model(

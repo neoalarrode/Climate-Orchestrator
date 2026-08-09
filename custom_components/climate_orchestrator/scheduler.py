@@ -67,6 +67,7 @@ AHORRO_MARGIN_SENSITIVITY = 0.5   # cuantos °C se recorta ese margen extra por 
 AHORRO_LOOKAHEAD_HOURS = 3        # cuantas horas de previsión exterior se miran para juzgar la tendencia (ahorro)
 ANTICIPATE_LOOKAHEAD_HOURS = 3    # cuantas horas de previsión exterior se miran para anticipar una salida de rango (confort Y ahorro)
 REFERENCE_RATE_DEG_H = 1.0        # tasa de referencia (°C/h) a partir de la cual una zona se considera "rapida" y se le da margen completo
+PRICE_ANTICIPATE_LOOKAHEAD_HOURS = 4  # cuantas horas del pronostico de red (Battery Orchestrator) se miran para anticipar una hora punta
 
 # TPI (Time Proportional Integral) — inspirado en versatile_thermostat:
 # en vez de un simple on/off, un switch recibe un porcentaje de tiempo
@@ -98,6 +99,7 @@ def decide_action(
     grid_tier: str | None = None,
     solar_surplus_now_w: float | None = None,
     zone_estimated_power_w: float | None = None,
+    grid_forecast: list[dict] | None = None,
 ) -> tuple[str, str]:
     """Devuelve (accion, motivo). `accion` es "heat" | "cool" | "idle".
 
@@ -113,11 +115,12 @@ def decide_action(
     outdoor.py. Sin previsión disponible, el motor sigue funcionando
     (reactivo puro, sin anticipacion ni ensanche de margen), nunca falla.
 
-    `grid_tier`/`solar_surplus_now_w`/`zone_estimated_power_w`: señal de
-    Battery Orchestrator, si esta instalado (ver modulo grid_signal.py) —
-    None si no hay addon, o si no ha reportado nunca. Solo se usan en
-    prioridad "ahorro"; sin ellos, "ahorro" se comporta exactamente igual
-    que antes de que existiera esta integracion (solo meteo exterior).
+    `grid_tier`/`solar_surplus_now_w`/`zone_estimated_power_w`/
+    `grid_forecast`: señal de Battery Orchestrator, si esta instalado (ver
+    modulo grid_signal.py) — None/[] si no hay addon, o si no ha
+    reportado nunca. Solo se usan en prioridad "ahorro"; sin ellos,
+    "ahorro" se comporta exactamente igual que antes de que existiera
+    esta integracion (solo meteo exterior).
     """
     heating = heat_target is not None
     cooling = cool_target is not None
@@ -156,10 +159,20 @@ def decide_action(
                                                       max_temp, min_temp)
             if action != "idle":
                 return action, reason
+            action, reason = _price_anticipation_preheat(True, current_temp, heat_target, deadband,
+                                                           grid_tier, grid_forecast, zone_estimated_power_w,
+                                                           max_temp, min_temp)
+            if action != "idle":
+                return action, reason
         if cooling:
             action, reason = _opportunistic_preheat(False, current_temp, cool_target, deadband,
                                                       solar_surplus_now_w, zone_estimated_power_w,
                                                       max_temp, min_temp)
+            if action != "idle":
+                return action, reason
+            action, reason = _price_anticipation_preheat(False, current_temp, cool_target, deadband,
+                                                           grid_tier, grid_forecast, zone_estimated_power_w,
+                                                           max_temp, min_temp)
             if action != "idle":
                 return action, reason
 
@@ -266,6 +279,46 @@ def _opportunistic_preheat(heating: bool, current_temp: float, target_temp: floa
         boost_target = max(target_temp - deadband, min_temp)
         if current_temp > boost_target:
             return "cool", "excedente solar disponible ahora: pre-climatizando antes de la próxima hora cara"
+    return "idle", ""
+
+
+def _price_anticipation_preheat(heating: bool, current_temp: float, target_temp: float, deadband: float,
+                                 grid_tier: str | None, grid_forecast: list[dict] | None,
+                                 zone_power_w: float | None, max_temp: float, min_temp: float) -> tuple[str, str]:
+    """Banco de confort por PRECIO: a diferencia de `_opportunistic_preheat`
+    (que solo mira el excedente solar AHORA MISMO), esta mira el
+    PRONOSTICO que Battery Orchestrator ya calcula para si mismo (ver
+    grid_signal.py) — si alguna de las proximas `PRICE_ANTICIPATE_LOOKAHEAD_HOURS`
+    horas sera "punta" sin excedente solar que la cubra, y la hora ACTUAL
+    todavia no lo es, adelanta la actuacion usando la inercia termica del
+    edificio como deposito de confort gratis mientras es barato, en vez
+    de esperar a que llegue la hora cara para notarlo.
+
+    A proposito NO mira la hora actual (indice 0 del pronostico, ya
+    cubierto por `grid_tier`): si la hora punta YA es ahora, esto no debe
+    disparar (seria "precalentar" en plena hora cara) — ese caso ya lo
+    cubre el margen recortado de `_economic_factor` en la rama reactiva.
+
+    Nunca cruza max_temp/min_temp ni pasa de un deadband extra. Sin
+    pronostico (Battery Orchestrator no instalado, sin datos todavia, o
+    zona sin potencia estimada/aprendida), no hace nada — nunca inventa
+    una hora punta que no esta confirmada en el pronostico."""
+    if not grid_forecast or not zone_power_w or grid_tier == "punta":
+        return "idle", ""
+    upcoming_expensive = any(
+        h.get("tier") == "punta" and (h.get("solar_surplus_w") or 0) < zone_power_w
+        for h in grid_forecast[1:PRICE_ANTICIPATE_LOOKAHEAD_HOURS + 1]
+    )
+    if not upcoming_expensive:
+        return "idle", ""
+    if heating:
+        boost_target = min(target_temp + deadband, max_temp)
+        if current_temp < boost_target:
+            return "heat", "hora punta próxima sin sol suficiente: pre-climatizando ahora que es más barato"
+    else:
+        boost_target = max(target_temp - deadband, min_temp)
+        if current_temp > boost_target:
+            return "cool", "hora punta próxima sin sol suficiente: pre-climatizando ahora que es más barato"
     return "idle", ""
 
 

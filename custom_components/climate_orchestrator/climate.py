@@ -372,7 +372,14 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             # grid_signal.py) — None/None si no esta instalado. Solo
             # diagnostico: la decision real ya se tomo con esto mismo en
             # `_async_decide_and_act`, esto es para poder comprobarlo.
-            **{f"grid_{k}": v for k, v in grid_signal.read(self.hass).items()},
+            # "forecast" se excluye a proposito: es una lista de hasta 48
+            # elementos que cambia en cada publicacion de Battery
+            # Orchestrator, y grabarla entera como atributo de CADA zona
+            # en CADA ciclo en el recorder seria el mismo derroche que se
+            # corrigio alli (ver grid_signal.py) — aqui solo se consume en
+            # memoria para la decision (`_price_anticipation_preheat`),
+            # nunca se persiste de mas.
+            **{f"grid_{k}": v for k, v in grid_signal.read(self.hass).items() if k != "forecast"},
             # TPI (ver scheduler.py `tpi_on_percent`): % del ciclo que los
             # switches del lado activo deben estar encendidos ahora mismo.
             # None si ese lado no esta activo (switches apagados sin mas).
@@ -1054,6 +1061,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 idle_loss_coeff=self._thermal_model.get("idle_loss_coeff", 0.0),
                 grid_tier=grid["tier"], solar_surplus_now_w=grid["solar_surplus_now_w"],
                 zone_estimated_power_w=self._zone_estimated_power_w(),
+                grid_forecast=grid["forecast"],
             )
             self._reason = f"{preset_reason} — {decide_reason}"
             if action == "idle" and self._attr_hvac_mode == self._default_hvac_mode(self._last_full_capability):

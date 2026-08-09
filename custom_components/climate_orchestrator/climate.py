@@ -83,7 +83,7 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util, slugify
 
-from . import ema as ema_module, outdoor, presets as presets_module, scheduler, thermal_model, window_algorithm
+from . import ema as ema_module, outdoor, power_model, presets as presets_module, scheduler, thermal_model, window_algorithm
 from .const import (
     CONF_AUTO_WINDOW_DETECTION,
     CONF_CLIMATE_ENTITIES,
@@ -97,13 +97,14 @@ from .const import (
     CONF_HISTORY_DAYS_FOR_INERTIA,
     CONF_HUMIDIFIER_ENTITIES,
     CONF_HUMIDITY_SENSOR,
+    CONF_ACTUATOR_POWER,
+    CONF_HOME_POWER_SENSOR,
     CONF_MAX_POWER_W,
     CONF_MAX_TEMP,
     CONF_MIN_OFF_SECONDS,
     CONF_MIN_ON_SECONDS,
     CONF_MIN_TEMP,
     CONF_OUTDOOR_TEMP_SENSOR,
-    CONF_POWER_ENTITIES,
     CONF_PRESENCE_ENTITIES,
     CONF_PRESENCE_PRESET,
     CONF_AWAY_PRESET,
@@ -111,6 +112,7 @@ from .const import (
     CONF_PRIORITY,
     CONF_SIMULATE,
     CONF_TARGET_HUMIDITY,
+    CONF_TPI_CYCLE_MINUTES,
     CONF_WEATHER_ENTITY,
     DEFAULT_DEADBAND,
     DEFAULT_DRY_HUMIDITY_THRESHOLD,
@@ -125,6 +127,7 @@ from .const import (
     DEFAULT_MIN_TEMP,
     DEFAULT_OUTDOOR_HORIZON_HOURS,
     DEFAULT_TARGET_HUMIDITY,
+    DEFAULT_TPI_CYCLE_MINUTES,
     DOMAIN,
 )
 
@@ -252,6 +255,14 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
         self._switch_last_change: dict[str, tuple[str, object]] = {}
 
+        # TPI (ver scheduler.py `tpi_on_percent`/`_tpi_desired_on`):
+        # inicio del ciclo actual de cada lado ("heat"/"cool") — dentro de
+        # ese ciclo, el switch esta encendido durante el primer
+        # `on_percent` % del tiempo, apagado el resto.
+        self._tpi_cycle_start: dict[str, object] = {}
+        self._last_heat_on_percent: float | None = None
+        self._last_cool_on_percent: float | None = None
+
         # Desviacion medida AHORA MISMO entre el sensor propio de cada
         # climate.* delegado y el sensor externo de la zona — ver
         # `_compensate_delegate_target`. Se expone tal cual en
@@ -294,10 +305,19 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._equipment_run: tuple[str, object, float] | None = None
         self._equipment_failure_suspected = False
 
+        # Aprendido de CONF_HOME_POWER_SENSOR (ver power_model.py), SOLO
+        # para los actuadores que no tengan ni sensor propio ni potencia
+        # estimada declarada (ver CONF_ACTUATOR_POWER) — {entity_id:
+        # {"learned_power_w","reliable","samples_used",
+        # "samples_discarded_other_zone"}}. Se refresca en el ciclo lento
+        # (ver _async_refresh_forecast), igual que thermal_model.
+        self._power_model: dict = {}
+
     # ---------------------------------------------------------- estado ----
 
     @property
     def extra_state_attributes(self) -> dict:
+        zone_power_w, zone_power_breakdown = self._zone_power_w()
         return {
             "reason": self._reason,
             "active_preset": self._active_preset_name,
@@ -336,9 +356,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             # Posible fallo del equipo (ver _check_equipment_failure) —
             # solo informativo, nunca cambia la decision por su cuenta.
             "equipment_failure_suspected": self._equipment_failure_suspected,
-            # Potencia sumada en vivo de CONF_POWER_ENTITIES (W), None si
-            # no hay ninguno declarado.
-            "zone_power_w": self._zone_power_w(),
+            # Potencia total de la zona ahora mismo (W) — suma por
+            # actuador ACTIVO, cada uno por su propia fuente (medida >
+            # aprendida > estimada, ver CONF_ACTUATOR_POWER/`_zone_power_w`).
+            # `zone_power_breakdown` detalla cada actuador que aporta algo.
+            "zone_power_w": zone_power_w,
+            "zone_power_breakdown": zone_power_breakdown,
+            # TPI (ver scheduler.py `tpi_on_percent`): % del ciclo que los
+            # switches del lado activo deben estar encendidos ahora mismo.
+            # None si ese lado no esta activo (switches apagados sin mas).
+            "tpi_heat_on_percent": self._last_heat_on_percent,
+            "tpi_cool_on_percent": self._last_cool_on_percent,
         }
 
     # ---------------------------------------------------- capacidad real ----
@@ -558,7 +586,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             *(self.zone.get(CONF_DOOR_WINDOW_ENTITIES) or []),
             *(self.zone.get(CONF_CLIMATE_ENTITIES) or []),
             *(self.zone.get(CONF_HUMIDIFIER_ENTITIES) or []),
-            *(self.zone.get(CONF_POWER_ENTITIES) or []),
+            *(c.get("sensor") for c in (self.zone.get(CONF_ACTUATOR_POWER) or {}).values() if c.get("sensor")),
         ] if e]
         if watched:
             self.async_on_remove(async_track_state_change_event(self.hass, watched, self._handle_reactive_event))
@@ -731,24 +759,67 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 self.zone.get("name"), int(elapsed_min), run_action, current_temp, start_temp,
             )
 
-    def _zone_power_w(self) -> float | None:
-        """Suma en vivo de los sensores de potencia declarados (ver
-        CONF_POWER_ENTITIES) — None si no hay ninguno declarado."""
-        entities = self.zone.get(CONF_POWER_ENTITIES) or []
-        if not entities:
-            return None
+    def _all_declared_actuators(self) -> list[str]:
+        return (
+            (self.zone.get(CONF_HEAT_SWITCHES) or [])
+            + (self.zone.get(CONF_COOL_SWITCHES) or [])
+            + (self.zone.get(CONF_CLIMATE_ENTITIES) or [])
+            + (self.zone.get(CONF_HUMIDIFIER_ENTITIES) or [])
+        )
+
+    def _actuator_active(self, entity_id: str) -> bool:
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return False
+        if entity_id.startswith("climate."):
+            return state.attributes.get("hvac_action") in ("heating", "cooling")
+        return state.state == "on"
+
+    def _actuator_power_w(self, entity_id: str) -> tuple[float | None, str]:
+        """(vatios, fuente) de ESTE actuador CONCRETO ahora mismo — nunca
+        de la zona entera, ver CONF_ACTUATOR_POWER en const.py: "measured"
+        (su propio sensor declarado), "learned" (aprendido de
+        CONF_HOME_POWER_SENSOR, ver power_model.py), "estimated" (valor
+        fijo declarado de su ficha tecnica), o (None, "none") si no hay
+        nada que ofrecer."""
+        config = (self.zone.get(CONF_ACTUATOR_POWER) or {}).get(entity_id) or {}
+        sensor = config.get("sensor")
+        if sensor:
+            state = self.hass.states.get(sensor)
+            if state is not None and state.state not in ("unknown", "unavailable"):
+                try:
+                    return float(state.state), "measured"
+                except (TypeError, ValueError):
+                    pass
+        learned = self._power_model.get(entity_id)
+        if learned and learned.get("reliable") and learned.get("learned_power_w") is not None:
+            return float(learned["learned_power_w"]), "learned"
+        estimated = config.get("estimated_w")
+        if estimated:
+            return float(estimated), "estimated"
+        return None, "none"
+
+    def _zone_power_w(self) -> tuple[float | None, dict]:
+        """Potencia TOTAL de la zona ahora mismo: suma de cada actuador
+        que este REALMENTE activo (`_actuator_active`), cada uno por su
+        propia fuente (`_actuator_power_w`) — nunca un unico numero de
+        zona como antes, ver CONF_ACTUATOR_POWER. Devuelve (total,
+        desglose) — desglose es {entity_id: {"watts","source"}}, solo de
+        los que de verdad aportan algo. (None, {}) si nada esta activo o
+        no hay ningun dato de potencia disponible."""
+        breakdown: dict[str, dict] = {}
         total = 0.0
-        any_valid = False
-        for e in entities:
-            state = self.hass.states.get(e)
-            if state is None or state.state in ("unknown", "unavailable"):
+        any_known = False
+        for entity_id in self._all_declared_actuators():
+            if not self._actuator_active(entity_id):
                 continue
-            try:
-                total += float(state.state)
-                any_valid = True
-            except (TypeError, ValueError):
+            watts, source = self._actuator_power_w(entity_id)
+            if watts is None:
                 continue
-        return total if any_valid else None
+            breakdown[entity_id] = {"watts": watts, "source": source}
+            total += watts
+            any_known = True
+        return (total if any_known else None), breakdown
 
     def _preset_value(self, preset_name: str, side: str) -> float | None:
         """Consigna VIVA (calor o frio) de un preset — se busca en su
@@ -787,6 +858,22 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._thermal_model = await thermal_model.async_get_model(
             self.hass, self.zone, int(self.zone.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA))
         )
+
+        # Consumo aprendido (ver power_model.py) — SOLO para los
+        # actuadores que no tengan ni sensor propio ni potencia estimada
+        # declarada (CONF_ACTUATOR_POWER): para esos ya no hace falta
+        # aprender nada, se usan tal cual.
+        home_power_sensor = self.zone.get(CONF_HOME_POWER_SENSOR, "")
+        actuator_power = self.zone.get(CONF_ACTUATOR_POWER) or {}
+        entities_to_learn = [
+            e for e in self._all_declared_actuators()
+            if not actuator_power.get(e, {}).get("sensor") and not actuator_power.get(e, {}).get("estimated_w")
+        ]
+        self._power_model = await power_model.async_get_power_model(
+            self.hass, entities_to_learn, self.entry.entry_id, home_power_sensor,
+            int(self.zone.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA)),
+        ) if home_power_sensor and entities_to_learn else {}
+
         await self._async_decide_and_act()
 
     # ---------------------------------------------------- decision barata --
@@ -929,7 +1016,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         max_power = self.zone.get(CONF_MAX_POWER_W) or 0
         if action in ("heat", "cool") and max_power > 0:
             already_active = self._attr_hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
-            zone_power = self._zone_power_w()
+            zone_power, _breakdown = self._zone_power_w()
             if not already_active and zone_power is not None and zone_power >= float(max_power):
                 self._reason += f" — pospuesto: potencia actual {zone_power:.0f}W ≥ máximo {float(max_power):.0f}W"
                 action = "idle"
@@ -942,10 +1029,23 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         # real, sin ambiguedad.
         climate_idle_keep = action == "idle" and not force_off and self._attr_hvac_mode not in (HVACMode.OFF, *_PASSTHROUGH_MODES)
 
+        # TPI (ver scheduler.py `tpi_on_percent`): solo se calcula para el
+        # lado que de verdad esta activo ahora mismo — los switches del
+        # otro lado, o si estamos en idle/off, se apagan sin mas (ver
+        # `_tpi_desired_on`). Solo afecta a switches, nunca a climate.*
+        # delegados (ya tienen su propio control interno).
+        heat_on_percent = scheduler.tpi_on_percent(current_temp, heat_target, self._outdoor_now, heating=True) \
+            if action == "heat" and heat_target is not None else None
+        cool_on_percent = scheduler.tpi_on_percent(current_temp, cool_target, self._outdoor_now, heating=False) \
+            if action == "cool" and cool_target is not None else None
+        tpi_cycle_minutes = float(self.zone.get(CONF_TPI_CYCLE_MINUTES, DEFAULT_TPI_CYCLE_MINUTES))
+        self._last_heat_on_percent, self._last_cool_on_percent = heat_on_percent, cool_on_percent
+
         self._update_target_attrs(heat_target, cool_target)
         target_for_actuator = heat_target if action == "heat" else cool_target if action == "cool" else (heat_target or cool_target)
         real_action = await self._async_execute(
-            action, target_for_actuator, capability, current_temp, deadband, climate_idle_keep, force_off=force_off
+            action, target_for_actuator, capability, current_temp, deadband, climate_idle_keep, force_off=force_off,
+            heat_on_percent=heat_on_percent, cool_on_percent=cool_on_percent, tpi_cycle_minutes=tpi_cycle_minutes,
         )
         # HVACAction.OFF (apagado de verdad, el modo elegido es "apagado")
         # es DISTINTO de HVACAction.IDLE (encendida, dentro de margen, sin
@@ -980,6 +1080,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     async def _async_execute(
         self, action: str, target_temp: float | None, capability: str, current_temp: float | None,
         deadband: float, climate_idle_keep: bool, force_off: bool = False,
+        heat_on_percent: float | None = None, cool_on_percent: float | None = None, tpi_cycle_minutes: float = DEFAULT_TPI_CYCLE_MINUTES,
     ) -> str:
         """Ejecuta la decision sobre TODOS los actuadores declarados —
         tantos como se quiera de cada tipo (ver const.py). `action` ya
@@ -1002,6 +1103,13 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         delegado pasa por `_drive_climate_idle` en vez del apagado directo,
         ver ahi el criterio real (mantener vs apagar, aprendido).
 
+        `heat_on_percent`/`cool_on_percent`: TPI (ver scheduler.py
+        `tpi_on_percent`) — el % del ciclo (`tpi_cycle_minutes`) que un
+        switch de ese lado debe estar encendido, en vez de un simple
+        on/off. None cuando ese lado no esta activo ahora mismo (los
+        switches de ese lado se apagan sin mas). Solo afecta a switches,
+        nunca a climate.* delegados (ya tienen su propio control interno).
+
         Los switches SOLO entienden calor/frio (un switch no tiene forma
         de ventilar o deshumidificar) — con "dry"/"fan_only" simplemente
         se apagan. Cada climate.* delegado se gobierna por SUS PROPIOS
@@ -1016,15 +1124,26 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         real_heat = real_cool = False
         real_other: str | None = None
         target_temp = target_temp if target_temp is not None else self._attr_current_temperature or 20.0
+        now = dt_util.utcnow()
 
         if capability in ("heat", "heat_cool"):
+            if heat_on_percent is not None:
+                desired_heat_on = self._tpi_desired_on("heat", heat_on_percent, tpi_cycle_minutes, now)
+            else:
+                desired_heat_on = False
+                self._tpi_cycle_start.pop("heat", None)  # sin demanda: el proximo ciclo empieza limpio, en fase "encendido"
             for sw in self.zone.get(CONF_HEAT_SWITCHES) or []:
-                if await self._drive_switch(sw, action == "heat", simulate, force=force_off):
+                if await self._drive_switch(sw, desired_heat_on, simulate, force=force_off):
                     real_heat = True
 
         if capability in ("cool", "heat_cool"):
+            if cool_on_percent is not None:
+                desired_cool_on = self._tpi_desired_on("cool", cool_on_percent, tpi_cycle_minutes, now)
+            else:
+                desired_cool_on = False
+                self._tpi_cycle_start.pop("cool", None)
             for sw in self.zone.get(CONF_COOL_SWITCHES) or []:
-                if await self._drive_switch(sw, action == "cool", simulate, force=force_off):
+                if await self._drive_switch(sw, desired_cool_on, simulate, force=force_off):
                     real_cool = True
 
         for entity_id in self.zone.get(CONF_CLIMATE_ENTITIES) or []:
@@ -1222,6 +1341,23 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         except (TypeError, ValueError):
             pass
         return compensated
+
+    def _tpi_desired_on(self, side: str, on_percent: float, cycle_minutes: float, now) -> bool:
+        """TPI: dentro de cada ciclo de `cycle_minutes`, el switch de este
+        lado ("heat"/"cool") esta encendido durante el primer `on_percent`
+        (0..1) del ciclo, apagado el resto — un patron simple "encendido
+        al principio, apagado al final", el mismo esquema clasico de
+        control proporcional por tiempo. `_drive_switch` sigue aplicando
+        su propio anti-ciclado por debajo (CONF_MIN_ON_SECONDS/
+        CONF_MIN_OFF_SECONDS), asi que un ciclo TPI muy corto frente a esos
+        minimos simplemente se queda limitado por ellos, nunca al reves."""
+        cycle_seconds = max(60.0, cycle_minutes * 60)
+        start = self._tpi_cycle_start.get(side)
+        if start is None or (now - start).total_seconds() >= cycle_seconds:
+            start = now
+            self._tpi_cycle_start[side] = start
+        elapsed = (now - start).total_seconds()
+        return elapsed < on_percent * cycle_seconds
 
     async def _drive_switch(self, entity_id: str, desired_on: bool, simulate: bool, force: bool = False) -> bool:
         """Aplica anti-ciclado (tiempo minimo encendido/apagado) y, si

@@ -93,6 +93,15 @@ CONF_MIN_ON_SECONDS = "min_on_seconds"
 CONF_MIN_OFF_SECONDS = "min_off_seconds"
 CONF_PRIORITY = "priority"                     # "confort" | "ahorro" | "manual"
 
+# TPI (ver scheduler.py `tpi_on_percent`): duracion del ciclo dentro del
+# cual un switch se enciende un % proporcional en vez de simplemente
+# on/off — cuanto mas corto, mas fino el control pero mas ciclos de
+# encendido/apagado (siempre respetando CONF_MIN_ON_SECONDS/
+# CONF_MIN_OFF_SECONDS por debajo). Solo afecta a switches; un climate.*
+# delegado ya tiene su propio control interno.
+CONF_TPI_CYCLE_MINUTES = "tpi_cycle_minutes"
+DEFAULT_TPI_CYCLE_MINUTES = 15
+
 # Reposo INTELIGENTE — sin interruptor propio: coexiste solo con el modo
 # mas automatico que tenga la zona (Auto en una con calor y frio de
 # verdad; el unico modo que le queda a una de un solo sentido, que ya es
@@ -135,14 +144,27 @@ CONF_SIMULATE = "simulate"                     # modo simulacion: calcula y mues
 # dar algun falso positivo con corrientes de aire fuertes.
 CONF_AUTO_WINDOW_DETECTION = "auto_window_detection"
 
-# Consumo electrico (opcional): sensores sensor.* de potencia (W) de los
-# actuadores de la zona, sumados en vivo — ver `_zone_power_w` en
-# climate.py. CONF_MAX_POWER_W, tambien opcional, activa ademas una
-# prevencion simple de sobrecarga: si la zona ya esta al limite (o por
-# encima) de esa potencia, no se arrancan NUEVOS actuadores hasta que
-# haya margen — lo que ya estuviera encendido no se corta de golpe por
-# esto, solo se evita sumar mas.
-CONF_POWER_ENTITIES = "power_entities"
+# Consumo electrico — POR ACTUADOR, no por zona: una misma zona puede
+# tener un aire acondicionado (maquina exterior compartida, imposible de
+# instrumentar) y un radiador electrico con su propio sensor de consumo,
+# y cada uno necesita su propia fuente. `actuator_power` (ver
+# CONF_ACTUATOR_POWER) es un dict {entity_id: {"sensor": sensor.* opcional,
+# "estimated_w": potencia fija opcional}} — se rellena desde un paso
+# dinamico del asistente/"Configurar", uno por cada actuador ya declarado.
+# Para el que no tenga ni sensor propio ni valor fijo, y si hay un
+# CONF_HOME_POWER_SENSOR general de la vivienda declarado, se intenta
+# APRENDER su consumo tipico (ver power_model.py) correlacionando sus
+# transiciones on/off con el salto visto en ese sensor general —
+# descartando muestras contaminadas por otras zonas activas a la vez.
+# Ver `_zone_power_w`/`_async_refresh_forecast` en climate.py.
+CONF_ACTUATOR_POWER = "actuator_power"
+CONF_HOME_POWER_SENSOR = "home_power_sensor"
+
+# CONF_MAX_POWER_W (opcional, a nivel de ZONA): activa una prevencion
+# simple de sobrecarga — si la zona ya esta al limite (o por encima) de
+# esa potencia (sumando lo que se sepa de cada actuador), no se arrancan
+# NUEVOS actuadores hasta que haya margen — lo que ya estuviera encendido
+# no se corta de golpe por esto, solo se evita sumar mas.
 CONF_MAX_POWER_W = "max_power_w"
 DEFAULT_MAX_POWER_W = 0.0  # 0 = sin limite (la prevencion de sobrecarga se desactiva)
 

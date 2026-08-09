@@ -52,6 +52,19 @@ AHORRO_LOOKAHEAD_HOURS = 3        # cuantas horas de previsión exterior se mira
 ANTICIPATE_LOOKAHEAD_HOURS = 3    # cuantas horas de previsión exterior se miran para anticipar una salida de rango (confort Y ahorro)
 REFERENCE_RATE_DEG_H = 1.0        # tasa de referencia (°C/h) a partir de la cual una zona se considera "rapida" y se le da margen completo
 
+# TPI (Time Proportional Integral) — inspirado en versatile_thermostat:
+# en vez de un simple on/off, un switch recibe un porcentaje de tiempo
+# encendido DENTRO de cada ciclo (ver `tpi_on_percent` y
+# `ClimateOrchestratorZone._tpi_desired_on` en climate.py), proporcional
+# a cuanto falta para la consigna — mas suave, menos golpes de
+# encendido/apagado, mas eficiente. Solo aplica a switches: un climate.*
+# delegado ya tiene su propio control interno, no le hace falta esto.
+# Coeficientes fijos por ahora (no configurables) — TPI_COEF_INT pesa el
+# error de temperatura INTERIOR, TPI_COEF_EXT un empuje extra por lo fria
+# u caliente que este fuera (ayuda a arrancar antes en dias extremos).
+TPI_COEF_INT = 0.4
+TPI_COEF_EXT = 0.05
+
 
 def decide_action(
     current_temp: float,
@@ -200,3 +213,20 @@ def _anticipate(heating: bool, current_temp: float, target_temp: float, deadband
         break  # se sale de rango en el horizonte, pero todavia hay tiempo de sobra antes de tener que actuar
 
     return "idle", ""
+
+
+def tpi_on_percent(current_temp: float, target_temp: float, outdoor_now: float | None, heating: bool) -> float:
+    """Duty-cycle proporcional (0..1) para un switch en modo TPI — ver
+    TPI_COEF_INT/TPI_COEF_EXT arriba. `heating=True` calienta (pesa mas
+    encendido cuanto mas frio respecto a la consigna); `heating=False`
+    enfria (al reves). Sin dato exterior, ese termino simplemente no
+    aporta nada (no se inventa un valor)."""
+    outdoor = outdoor_now if outdoor_now is not None else current_temp
+    if heating:
+        error_int = target_temp - current_temp
+        error_ext = target_temp - outdoor
+    else:
+        error_int = current_temp - target_temp
+        error_ext = outdoor - target_temp
+    on_percent = TPI_COEF_INT * error_int + TPI_COEF_EXT * error_ext
+    return max(0.0, min(1.0, on_percent))

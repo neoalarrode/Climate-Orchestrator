@@ -363,18 +363,57 @@ ciegas) y visibles como atributos de la entidad de la zona:
   cuenta ni sustituye al aprendizaje de reposo por delegado (punto 12,
   que detecta justo lo contrario: un equipo que no se para solo).
 
-## 15. Consumo eléctrico y potencia máxima
+## 15. Consumo eléctrico, por actuador — y potencia máxima
 
-Opcional (paso 7 del asistente, o "Configurar" → Avanzado): declara los
-sensores de potencia (W) de los actuadores de esta zona y se suman en
-vivo en el atributo `zone_power_w`.
+El consumo se declara **por actuador, no por zona**: una misma zona
+puede tener un aire acondicionado sin forma de medir su consumo real (la
+potencia viene de la máquina exterior, a veces compartida entre varias
+interiores) y un radiador eléctrico con su propio sensor — cada uno
+necesita su propia fuente. Paso "Consumo por actuador" del asistente (o
+"Configurar" → Consumo eléctrico), uno por cada actuador ya declarado:
 
-Si además configuras una **potencia máxima**, se activa una prevención de
-sobrecarga sencilla: mientras la zona ya esté al límite (o por encima) de
-esa potencia, no se arrancan actuadores NUEVOS hasta que haya margen —
-queda reflejado en `reason` ("pospuesto: potencia actual... ≥
-máximo..."). Lo que ya estuviera encendido no se corta de golpe por
+- **Sensor de potencia propio** (opcional): si el actuador tiene uno de
+  verdad, se usa tal cual — fuente `measured`.
+- **Potencia estimada fija** (opcional): un valor de su ficha técnica,
+  para cuando no se puede medir de verdad — fuente `estimated`.
+- Si no declaras ninguno de los dos, y en "Configurar" → Avanzado hay un
+  **sensor de potencia GENERAL de la vivienda**, Climate Orchestrator
+  intenta **aprender** el consumo típico de ese actuador en concreto —
+  fuente `learned` (ver más abajo).
+
+El atributo `zone_power_w` de la entidad de la zona es la suma de lo que
+esté REALMENTE activo ahora mismo, cada uno con su propia fuente;
+`zone_power_breakdown` detalla actuador por actuador (vatios y fuente).
+
+**Cómo se aprende** (`learned`): se busca en el histórico el salto de
+potencia visto en el sensor general justo al encender/apagar ese
+actuador concreto, y se toma la mediana de esos saltos — nunca un número
+inventado, y `reliable=false` si no hay muestras suficientes. Para que
+sea fiable incluso con una máquina exterior COMPARTIDA entre varias
+zonas, **se descarta cualquier transición que coincida con otra zona
+Climate Orchestrator ya activa en ese mismo instante** — así no se
+mezcla el consumo de dos equipos en una sola muestra. No es un dato
+medido, es una correlación: útil, pero no al 100%.
+
+**Potencia máxima** (opcional, por zona, en "Avanzado"): activa una
+prevención de sobrecarga sencilla — mientras la zona ya esté al límite
+(o por encima) de esa potencia, no se arrancan actuadores NUEVOS hasta
+que haya margen (reflejado en `reason`: "pospuesto: potencia actual...
+≥ máximo..."). Lo que ya estuviera encendido no se corta de golpe por
 esto, solo se evita sumar más mientras no haya sitio.
+
+## 15.5. Control proporcional (TPI) para switches
+
+Un switch (radiador, por ejemplo) ya no solo se enciende/apaga en bloque:
+dentro de cada ciclo (`tpi_cycle_minutes`, 15 min por defecto,
+configurable en "Configurar" → Avanzado) se enciende un **porcentaje
+proporcional** a cuánto falta para la consigna — más tiempo encendido
+cuanto más lejos, menos cuanto más cerca — en vez de un simple todo o
+nada. Más suave, menos golpes de encendido/apagado, más eficiente. Solo
+afecta a switches: un `climate.*` delegado ya tiene su propio control
+interno, no le hace falta esto. El anti-ciclado (`min_on_seconds`/
+`min_off_seconds`) se sigue respetando por debajo, siempre. Porcentaje
+actual visible en `tpi_heat_on_percent`/`tpi_cool_on_percent`.
 
 ## 16. Modo vs. preset vs. temperatura
 

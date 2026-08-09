@@ -15,6 +15,7 @@ from homeassistant.helpers import selector
 
 from . import presets as presets_module
 from .const import (
+    CONF_ACTUATOR_POWER,
     CONF_AUTO_WINDOW_DETECTION,
     CONF_AWAY_PRESET,
     CONF_CLIMATE_ENTITIES,
@@ -26,6 +27,7 @@ from .const import (
     CONF_FORECAST_REFRESH_MINUTES,
     CONF_HEAT_SWITCHES,
     CONF_HISTORY_DAYS_FOR_INERTIA,
+    CONF_HOME_POWER_SENSOR,
     CONF_HUMIDIFIER_ENTITIES,
     CONF_HUMIDITY_SENSOR,
     CONF_MAX_POWER_W,
@@ -34,13 +36,13 @@ from .const import (
     CONF_MIN_ON_SECONDS,
     CONF_MIN_TEMP,
     CONF_OUTDOOR_TEMP_SENSOR,
-    CONF_POWER_ENTITIES,
     CONF_PRESENCE_ENTITIES,
     CONF_PRESENCE_PRESET,
     CONF_PRESETS_TEXT,
     CONF_PRIORITY,
     CONF_SIMULATE,
     CONF_TARGET_HUMIDITY,
+    CONF_TPI_CYCLE_MINUTES,
     CONF_WEATHER_ENTITY,
     DEFAULT_DEADBAND,
     DEFAULT_DRY_HUMIDITY_THRESHOLD,
@@ -52,8 +54,17 @@ from .const import (
     DEFAULT_MIN_ON_SECONDS,
     DEFAULT_MIN_TEMP,
     DEFAULT_TARGET_HUMIDITY,
+    DEFAULT_TPI_CYCLE_MINUTES,
     DOMAIN,
 )
+
+# Prefijos de las claves DINAMICAS del paso "consumo por actuador" (ver
+# `_actuator_power_fields`/`_parse_actuator_power_input`) — una por cada
+# entidad ya declarada como actuador, generadas en tiempo de ejecucion
+# (no se conocen los entity_id de antemano, asi que no pueden ser claves
+# fijas de const.py).
+POWER_SENSOR_KEY_PREFIX = "power_sensor::"
+POWER_ESTIMATE_KEY_PREFIX = "power_estimate::"
 
 PRIORITY_OPTIONS = [
     selector.SelectOptionDict(value="confort", label="Confort: actúa en cuanto hace falta"),
@@ -125,6 +136,57 @@ def _actuator_fields() -> dict:
     }
 
 
+def _all_actuator_entities(data: dict) -> list[str]:
+    """Todos los actuadores YA declarados (de cualquier tipo) — es sobre
+    esta lista sobre la que se construye el paso dinamico de consumo
+    electrico POR ACTUADOR (ver `_actuator_power_fields`): una misma zona
+    puede tener un equipo sin forma de medir su consumo real (un aire
+    acondicionado con maquina exterior compartida) y otro con su propio
+    sensor, cada uno necesita su propia fuente."""
+    return (
+        (data.get(CONF_HEAT_SWITCHES) or [])
+        + (data.get(CONF_COOL_SWITCHES) or [])
+        + (data.get(CONF_CLIMATE_ENTITIES) or [])
+        + (data.get(CONF_HUMIDIFIER_ENTITIES) or [])
+    )
+
+
+def _actuator_power_fields(entities: list[str], existing: dict, editing: bool) -> dict:
+    """Campos DINAMICOS, uno por cada actuador ya declarado — claves
+    generadas con el propio entity_id (ver POWER_SENSOR_KEY_PREFIX/
+    POWER_ESTIMATE_KEY_PREFIX), asi que no pueden ser constantes fijas.
+    `editing=True` (options flow) da un default explicito (incluido ""/0
+    para "nada puesto"); en el alta nueva se deja sin default cuando no
+    hay nada que precargar, siguiendo el mismo patron ya usado en el
+    resto del asistente para selectores de entidad opcionales."""
+    fields: dict = {}
+    for entity_id in entities:
+        current_entity = existing.get(entity_id) or {}
+        sensor_key = f"{POWER_SENSOR_KEY_PREFIX}{entity_id}"
+        estimate_key = f"{POWER_ESTIMATE_KEY_PREFIX}{entity_id}"
+        if editing:
+            fields[vol.Optional(sensor_key, default=current_entity.get("sensor") or "")] = _entity("sensor", device_class="power")
+            fields[vol.Optional(estimate_key, default=current_entity.get("estimated_w") or 0)] = _watts_number()
+        else:
+            fields[vol.Optional(sensor_key)] = _entity("sensor", device_class="power")
+            fields[vol.Optional(estimate_key, default=0)] = _watts_number()
+    return fields
+
+
+def _parse_actuator_power_input(entities: list[str], user_input: dict) -> dict:
+    """Reconstruye el dict CONF_ACTUATOR_POWER a partir de las claves
+    dinamicas del formulario — solo se guarda entrada por actuador si de
+    verdad se puso algo (sensor o potencia estimada), para no llenar la
+    entrada de la zona de ceros/vacios inutiles."""
+    power: dict = {}
+    for entity_id in entities:
+        sensor = user_input.get(f"{POWER_SENSOR_KEY_PREFIX}{entity_id}") or None
+        estimate = user_input.get(f"{POWER_ESTIMATE_KEY_PREFIX}{entity_id}") or 0
+        if sensor or estimate:
+            power[entity_id] = {"sensor": sensor, "estimated_w": estimate}
+    return power
+
+
 class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Asistente de alta de una zona nueva, paso a paso."""
 
@@ -170,9 +232,32 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         asi que esos si van en su lista correspondiente)."""
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_presets()
+            return await self.async_step_actuator_power()
 
         return self.async_show_form(step_id="actuator", data_schema=vol.Schema(_actuator_fields()))
+
+    async def async_step_actuator_power(self, user_input=None):
+        """Consumo electrico POR ACTUADOR (opcional) — un sensor de
+        potencia propio si lo tiene, o una potencia estimada fija (de su
+        ficha tecnica) si no se puede medir, p.ej. un aire acondicionado
+        con maquina exterior compartida entre varias interiores. Se
+        salta sin mas si esta zona todavia no tiene ningun actuador
+        declarado."""
+        entities = _all_actuator_entities(self._data)
+        if not entities:
+            return await self.async_step_presets()
+
+        if user_input is not None:
+            self._data[CONF_ACTUATOR_POWER] = _parse_actuator_power_input(entities, user_input)
+            return await self.async_step_presets()
+
+        fields = _actuator_power_fields(entities, {}, editing=False)
+        return self.async_show_form(step_id="actuator_power", data_schema=vol.Schema(fields), description_placeholders={
+            "power_note": "Opcional, por cada actuador de arriba: un sensor de potencia (W) propio si lo tiene, o una potencia "
+                          "estimada fija (de su ficha técnica) si no se puede medir de verdad. Si lo dejas en blanco y más "
+                          "adelante declaras un sensor de potencia GENERAL de la vivienda (paso Avanzado), Climate Orchestrator "
+                          "intenta aprender solo su consumo típico."
+        })
 
     async def async_step_presets(self, user_input=None):
         """Presets con nombre en vez de horario — ver presets.py. Se valida
@@ -248,8 +333,10 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=DEFAULT_FORECAST_REFRESH_MINUTES): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
             vol.Optional(CONF_DRY_HUMIDITY_THRESHOLD, default=DEFAULT_DRY_HUMIDITY_THRESHOLD): _percent_number(),
-            vol.Optional(CONF_POWER_ENTITIES, default=[]): _entity("sensor", device_class="power", multiple=True),
+            vol.Optional(CONF_HOME_POWER_SENSOR): _entity("sensor", device_class="power"),
             vol.Optional(CONF_MAX_POWER_W, default=DEFAULT_MAX_POWER_W): _watts_number(),
+            vol.Optional(CONF_TPI_CYCLE_MINUTES, default=DEFAULT_TPI_CYCLE_MINUTES): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=5, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
             vol.Optional(CONF_SIMULATE, default=True): selector.BooleanSelector(),
         })
         return self.async_show_form(step_id="options", data_schema=schema, description_placeholders={
@@ -263,9 +350,10 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 "umbral elegido.",
             "window_note": "Detección automática de ventana abierta (opcional, desactivada por defecto): respaldo por caída/subida "
                             "anómala de temperatura para ventanas sin sensor propio — nunca sustituye a un sensor real declarado arriba.",
-            "power_note": "Consumo eléctrico (opcional): sensores de potencia (W) de los actuadores de esta zona, sumados en vivo. "
-                           "Si además pones una potencia máxima, no se arrancan nuevos actuadores mientras la zona ya esté al límite "
-                           "— lo que ya estuviera encendido no se corta por esto."
+            "power_note": "Sensor de potencia GENERAL de la vivienda (opcional): con él, Climate Orchestrator intenta aprender el "
+                          "consumo típico de los actuadores que no tengan ni sensor propio ni potencia estimada (paso Actuadores) "
+                          "— descartando muestras contaminadas por otras zonas activas a la vez. Si además pones una potencia "
+                          "máxima, no se arrancan nuevos actuadores mientras la zona ya esté al límite."
         })
 
     @staticmethod
@@ -302,7 +390,7 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["general", "actuators", "presets", "limits", "presence_window", "advanced"],
+            menu_options=["general", "actuators", "presets", "limits", "presence_window", "power", "advanced"],
         )
 
     def _save_and_close(self, user_input: dict):
@@ -338,6 +426,28 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(CONF_HUMIDIFIER_ENTITIES, default=current.get(CONF_HUMIDIFIER_ENTITIES, [])): _entity("humidifier", multiple=True),
         }
         return self.async_show_form(step_id="actuators", data_schema=vol.Schema(fields))
+
+    async def async_step_power(self, user_input=None):
+        """Consumo electrico POR ACTUADOR (ver `_actuator_power_fields` —
+        no por zona: un aire acondicionado sin forma de medir su consumo
+        real y un radiador con su propio sensor, en la misma zona,
+        necesitan cada uno su propia fuente)."""
+        current = {**self.config_entry.data}
+        entities = _all_actuator_entities(current)
+        existing_power = current.get(CONF_ACTUATOR_POWER) or {}
+        if user_input is not None:
+            return self._save_and_close({CONF_ACTUATOR_POWER: _parse_actuator_power_input(entities, user_input)})
+        if not entities:
+            return self.async_show_form(step_id="power", data_schema=vol.Schema({}), description_placeholders={
+                "power_note": "Esta zona todavía no tiene ningún actuador declarado — añade uno primero en \"Actuadores\"."
+            })
+        fields = _actuator_power_fields(entities, existing_power, editing=True)
+        return self.async_show_form(step_id="power", data_schema=vol.Schema(fields), description_placeholders={
+            "power_note": "Por cada actuador: un sensor de potencia (W) propio si lo tiene, o una potencia estimada fija (de su "
+                          "ficha técnica) si no se puede medir de verdad — p.ej. un aire acondicionado con máquina exterior "
+                          "compartida. El sensor de potencia GENERAL de la vivienda (para aprender el resto solos) se declara en "
+                          "\"Avanzado\"."
+        })
 
     async def async_step_presets(self, user_input=None):
         current = {**self.config_entry.data}
@@ -393,8 +503,10 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=current.get(CONF_FORECAST_REFRESH_MINUTES, DEFAULT_FORECAST_REFRESH_MINUTES)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
             vol.Optional(CONF_DRY_HUMIDITY_THRESHOLD, default=current.get(CONF_DRY_HUMIDITY_THRESHOLD, DEFAULT_DRY_HUMIDITY_THRESHOLD)): _percent_number(),
-            vol.Optional(CONF_POWER_ENTITIES, default=current.get(CONF_POWER_ENTITIES, [])): _entity("sensor", device_class="power", multiple=True),
+            vol.Optional(CONF_HOME_POWER_SENSOR, default=current.get(CONF_HOME_POWER_SENSOR, "")): _entity("sensor", device_class="power"),
             vol.Optional(CONF_MAX_POWER_W, default=current.get(CONF_MAX_POWER_W, DEFAULT_MAX_POWER_W)): _watts_number(),
+            vol.Optional(CONF_TPI_CYCLE_MINUTES, default=current.get(CONF_TPI_CYCLE_MINUTES, DEFAULT_TPI_CYCLE_MINUTES)): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=5, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
             vol.Optional(CONF_SIMULATE, default=current.get(CONF_SIMULATE, True)): selector.BooleanSelector(),
         }
         return self.async_show_form(step_id="advanced", data_schema=vol.Schema(fields))

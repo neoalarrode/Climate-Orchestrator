@@ -28,6 +28,10 @@
           "cool_switches": "Switches de refrigeración"
         }
       },
+      "actuator_power": {
+        "title": "Consumo por actuador",
+        "description": "Opcional, por cada actuador: su propio sensor de potencia (W) si lo tiene, o una potencia estimada fija (de su ficha técnica) si no se puede medir — p.ej. un aire acondicionado con máquina exterior compartida."
+      },
       "presets": {
         "title": "Presets",
         "description": "Presets con nombre en vez de un horario fijo — Climate Orchestrator cambia entre ellos según la presencia real. Formato: \"Nombre: calor/frío\" (consignas de invierno y verano por separado) o \"Nombre: temperatura\" para zonas de un solo sentido, separados por comas. Ejemplo: \"Confort: 21/25, Ausente: 17/28, Fiesta: 23/24\". Esto solo siembra el valor inicial: luego cada consigna es su propia entidad number.*, ajustable desde Lovelace.",
@@ -65,8 +69,9 @@
           "history_days_for_inertia": "Días de histórico para la inercia térmica",
           "forecast_refresh_minutes": "Frecuencia de recálculo de la previsión",
           "dry_humidity_threshold": "Umbral de humedad para deshumidificar",
-          "power_entities": "Sensores de potencia (W) de los actuadores de esta zona (opcional)",
+          "home_power_sensor": "Sensor de potencia general de la vivienda (opcional) — para aprender actuadores sin sensor/estimación",
           "max_power_w": "Potencia máxima (W) — pospone nuevos arranques por encima de esto (opcional)",
+          "tpi_cycle_minutes": "Duración del ciclo TPI para switches (min) — tiempo encendido proporcional dentro de cada ciclo",
           "simulate": "Modo simulación (nunca toca actuadores reales)"
         }
       }
@@ -84,6 +89,7 @@
           "presets": "Presets",
           "limits": "Límites de seguridad",
           "presence_window": "Presencia y ventana",
+          "power": "Consumo eléctrico",
           "advanced": "Avanzado"
         }
       },
@@ -134,14 +140,19 @@
           "auto_window_detection": "Detectar ventana abierta automáticamente (respaldo para ventanas sin sensor)"
         }
       },
+      "power": {
+        "title": "Consumo eléctrico",
+        "description": "Opcional, por cada actuador: su propio sensor de potencia (W) si lo tiene, o una potencia estimada fija (de su ficha técnica) si no se puede medir — p.ej. un aire acondicionado con máquina exterior compartida."
+      },
       "advanced": {
         "title": "Avanzado",
         "data": {
           "history_days_for_inertia": "Días de histórico para la inercia térmica",
           "forecast_refresh_minutes": "Frecuencia de recálculo de la previsión",
           "dry_humidity_threshold": "Umbral de humedad para deshumidificar",
-          "power_entities": "Sensores de potencia (W) de los actuadores de esta zona (opcional)",
+          "home_power_sensor": "Sensor de potencia general de la vivienda (opcional) — para aprender actuadores sin sensor/estimación",
           "max_power_w": "Potencia máxima (W) — pospone nuevos arranques por encima de esto (opcional)",
+          "tpi_cycle_minutes": "Duración del ciclo TPI para switches (min) — tiempo encendido proporcional dentro de cada ciclo",
           "simulate": "Modo simulación (nunca toca actuadores reales)"
         }
       }

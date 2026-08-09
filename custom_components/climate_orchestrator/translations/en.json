@@ -28,6 +28,10 @@
           "cool_switches": "Cooling switches"
         }
       },
+      "actuator_power": {
+        "title": "Power per actuator",
+        "description": "Optional, per actuator: its own power sensor (W) if it has one, or a fixed estimated wattage (from its spec sheet) if it can't be measured — e.g. an AC with a shared outdoor unit."
+      },
       "presets": {
         "title": "Presets",
         "description": "Named presets instead of a fixed schedule — Climate Orchestrator switches between them by real presence. Format: \"Name: heat/cool\" (separate winter/summer setpoints) or \"Name: temperature\" for single-direction zones, comma-separated. Example: \"Comfort: 21/25, Away: 17/28, Party: 23/24\". This only seeds the initial value — each setpoint then becomes its own number.* entity, adjustable from Lovelace.",
@@ -65,8 +69,9 @@
           "history_days_for_inertia": "History days for thermal inertia",
           "forecast_refresh_minutes": "Forecast refresh interval",
           "dry_humidity_threshold": "Humidity threshold for dry mode",
-          "power_entities": "Power sensors (W) for this zone's actuators (optional)",
+          "home_power_sensor": "General home power sensor (optional) — used to learn actuators without a sensor/estimate",
           "max_power_w": "Maximum power (W) — pauses new activations above this (optional)",
+          "tpi_cycle_minutes": "TPI cycle length for switches (min) — proportional on-time within each cycle",
           "simulate": "Simulation mode (never touches real actuators)"
         }
       }
@@ -84,6 +89,7 @@
           "presets": "Presets",
           "limits": "Safety limits",
           "presence_window": "Presence & window",
+          "power": "Power",
           "advanced": "Advanced"
         }
       },
@@ -134,14 +140,19 @@
           "auto_window_detection": "Auto-detect open window (backup for windows without a sensor)"
         }
       },
+      "power": {
+        "title": "Power",
+        "description": "Optional, per actuator: its own power sensor (W) if it has one, or a fixed estimated wattage (from its spec sheet) if it can't be measured — e.g. an AC with a shared outdoor unit."
+      },
       "advanced": {
         "title": "Advanced",
         "data": {
           "history_days_for_inertia": "History days for thermal inertia",
           "forecast_refresh_minutes": "Forecast refresh interval",
           "dry_humidity_threshold": "Humidity threshold for dry mode",
-          "power_entities": "Power sensors (W) for this zone's actuators (optional)",
+          "home_power_sensor": "General home power sensor (optional) — used to learn actuators without a sensor/estimate",
           "max_power_w": "Maximum power (W) — pauses new activations above this (optional)",
+          "tpi_cycle_minutes": "TPI cycle length for switches (min) — proportional on-time within each cycle",
           "simulate": "Simulation mode (never touches real actuators)"
         }
       }

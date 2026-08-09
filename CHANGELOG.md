@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.9.0 (sin publicar — implementado, pendiente de revisión)
+
+- **Control proporcional TPI para switches**: en vez de un simple
+  on/off, cada switch se enciende un porcentaje del ciclo
+  (`tpi_cycle_minutes`, 15 min por defecto) proporcional a cuánto falta
+  para la consigna (`scheduler.tpi_on_percent`) — más suave, menos
+  ciclos de encendido/apagado. Solo afecta a switches, nunca a
+  `climate.*` delegados. Coeficientes (`TPI_COEF_INT`/`TPI_COEF_EXT`)
+  fijos por ahora, no configurables. El anti-ciclado
+  (`min_on_seconds`/`min_off_seconds`) se sigue respetando por debajo.
+  Nuevos atributos `tpi_heat_on_percent`/`tpi_cool_on_percent`.
+- **Consumo eléctrico rediseñado: por actuador, no por zona** (cambio
+  incompatible con la 0.8.0 — `power_entities`/`estimated_power_w`
+  desaparecen, sustituidos por `actuator_power`, un valor por cada
+  actuador). Una misma zona puede tener un equipo sin forma de medir su
+  consumo real (aire acondicionado con máquina exterior compartida) y
+  otro con su propio sensor — cada uno con su propia fuente: sensor
+  propio (`measured`), potencia fija estimada de su ficha técnica
+  (`estimated`), o **aprendida** de un sensor de potencia general de la
+  vivienda (`learned`, ver `power_model.py`) correlacionando sus
+  transiciones on/off con el salto visto en ese sensor — **descartando
+  muestras que coincidan con otra zona Climate Orchestrator ya activa**,
+  para no mezclar el consumo de dos equipos que comparten máquina
+  exterior. Nuevo paso "Consumo por actuador" (dinámico, uno por
+  actuador declarado) en el asistente y en "Configurar". Nuevos
+  atributos `zone_power_w`/`zone_power_breakdown`.
+
 ## 0.8.0
 
 Revisado a fondo el código de versatile_thermostat buscando mejoras de

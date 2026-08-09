@@ -342,17 +342,58 @@ as attributes on the zone entity:
   the per-delegate idle learning (point 12, which catches the opposite:
   equipment that won't stop on its own).
 
-## 15. Power consumption and maximum power
+## 15. Power consumption, per actuator — and maximum power
 
-Optional (wizard step 7, or "Configure" → Advanced): declare this zone's
-actuators' power sensors (W) and they're summed live in the
-`zone_power_w` attribute.
+Consumption is declared **per actuator, not per zone**: a zone can have
+an air conditioner with no way to measure its real consumption (the
+power comes from the outdoor unit, sometimes shared between several
+indoor units) and an electric radiator with its own sensor — each needs
+its own source. Wizard step "Power per actuator" (or "Configure" → Power
+consumption), one per already-declared actuator:
 
-If you also set a **maximum power**, a simple overload-prevention kicks
-in: while the zone is already at (or over) that power, NEW actuators
-aren't started until there's room — reflected in `reason` ("postponed:
-current power... ≥ maximum..."). Whatever's already on isn't cut off by
-this, it just avoids adding more while there's no room.
+- **Its own power sensor** (optional): used as-is if it has one — source
+  `measured`.
+- **Fixed estimated wattage** (optional): a value from its spec sheet,
+  for when it genuinely can't be measured — source `estimated`.
+- If you declare neither, and there's a **general home power sensor**
+  under "Configure" → Advanced, Climate Orchestrator tries to **learn**
+  that specific actuator's typical consumption — source `learned` (see
+  below).
+
+The zone entity's `zone_power_w` attribute is the sum of whatever is
+REALLY active right now, each with its own source;
+`zone_power_breakdown` details it actuator by actuator (watts and
+source).
+
+**How learning works** (`learned`): the history is searched for the
+power jump seen on the general sensor right around that specific
+actuator's on/off transitions, and the median of those jumps is used —
+never a made-up number, and `reliable=false` with too few samples. To
+stay reliable even with a SHARED outdoor unit across zones, **any
+transition that overlaps another Climate Orchestrator zone already being
+active is discarded** — so two devices' consumption never gets mixed
+into one sample. It's not a direct measurement, it's a correlation —
+useful, but not 100%.
+
+**Maximum power** (optional, per zone, under "Advanced"): enables a
+simple overload prevention — while the zone is already at (or over) that
+power, NEW actuators aren't started until there's room (reflected in
+`reason`: "postponed: current power... ≥ maximum..."). Whatever's
+already on isn't cut off by this, it just avoids adding more while
+there's no room.
+
+## 15.5. Proportional (TPI) control for switches
+
+A switch (a radiator, say) no longer just switches fully on/off: within
+each cycle (`tpi_cycle_minutes`, 15 min by default, configurable under
+"Configure" → Advanced) it's turned on for a **proportional percentage**
+of how far it is from the setpoint — more on-time the further away, less
+the closer — instead of a plain all-or-nothing. Smoother, fewer on/off
+jolts, more efficient. Only affects switches: a delegated `climate.*`
+already has its own internal control, it doesn't need this. Anti-cycling
+(`min_on_seconds`/`min_off_seconds`) is still always respected
+underneath. Current percentage visible in `tpi_heat_on_percent`/
+`tpi_cool_on_percent`.
 
 ## 16. Mode vs. preset vs. temperature
 

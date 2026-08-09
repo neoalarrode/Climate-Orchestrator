@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.8.0
+
+Revisado a fondo el código de versatile_thermostat buscando mejoras de
+eficiencia y corrección de errores. Adoptadas, simplificadas al espíritu
+de esta integración (deterministas, transparentes, opcionales cuando
+implican inferencia):
+
+- **Suavizado EMA del sensor externo** — un pico de ruido puntual ya no
+  hace que la zona cambie de decisión de golpe.
+- **Vigilancia de sensor "congelado"**: si el sensor externo deja de
+  actualizarse de verdad (sin llegar a marcarse `unavailable`), se sigue
+  confiando en la última lectura suavizada hasta 90 minutos — antes se
+  perdía de golpe la protección de límites de seguridad.
+- **Detección automática de ventana abierta** sin sensor dedicado
+  (opcional, desactivada por defecto): respaldo por caída/subida anómala
+  de temperatura para ventanas sin sensor propio.
+- **Detección de posible fallo del equipo**: aviso si se lleva 30 min
+  pidiendo calor/frío sin que la temperatura se mueva lo esperado.
+- **Consumo eléctrico y potencia máxima** (opcional): sensores de
+  potencia por zona sumados en vivo, con prevención simple de sobrecarga
+  (no arranca actuadores nuevos si ya se está al límite).
+- **Menú de configuración por categorías**, más fácil de usar: "Configurar"
+  ahora abre un menú (General, Actuadores, Presets, Límites de seguridad,
+  Presencia y ventana, Avanzado) en vez de un único formulario gigante
+  con ~25 campos a la vez.
+
+Pendiente para una próxima versión: TPI (proporcional, no solo on/off)
+para switches — el cambio de motor más grande, se aborda aparte.
+
 ## 0.7.1
 
 - Corregido: la zona no arrancaba — `ImportError: cannot import name

@@ -124,6 +124,28 @@ CONF_HISTORY_DAYS_FOR_INERTIA = "history_days_for_inertia"
 CONF_FORECAST_REFRESH_MINUTES = "forecast_refresh_minutes"
 CONF_SIMULATE = "simulate"                     # modo simulacion: calcula y muestra, nunca actua de verdad
 
+# Deteccion de ventana/puerta abierta SIN sensor dedicado (ver
+# window_algorithm.py) — RESPALDO opcional (desactivado por defecto, no
+# cambia nada en una zona existente hasta que se active a proposito) de
+# CONF_DOOR_WINDOW_ENTITIES, nunca un sustituto: analiza la pendiente del
+# sensor exterior y pausa la zona igual que un sensor real si detecta una
+# caida/subida de temperatura anomala en contra de lo que se pide.
+# Desactivado por defecto porque, a diferencia del resto de reglas de
+# esta integracion, es una inferencia (no un dato medido directo) — puede
+# dar algun falso positivo con corrientes de aire fuertes.
+CONF_AUTO_WINDOW_DETECTION = "auto_window_detection"
+
+# Consumo electrico (opcional): sensores sensor.* de potencia (W) de los
+# actuadores de la zona, sumados en vivo — ver `_zone_power_w` en
+# climate.py. CONF_MAX_POWER_W, tambien opcional, activa ademas una
+# prevencion simple de sobrecarga: si la zona ya esta al limite (o por
+# encima) de esa potencia, no se arrancan NUEVOS actuadores hasta que
+# haya margen — lo que ya estuviera encendido no se corta de golpe por
+# esto, solo se evita sumar mas.
+CONF_POWER_ENTITIES = "power_entities"
+CONF_MAX_POWER_W = "max_power_w"
+DEFAULT_MAX_POWER_W = 0.0  # 0 = sin limite (la prevencion de sobrecarga se desactiva)
+
 DEFAULT_DEADBAND = 0.3
 DEFAULT_MIN_TEMP = 15.0
 DEFAULT_MAX_TEMP = 30.0

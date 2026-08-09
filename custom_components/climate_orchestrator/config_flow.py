@@ -15,6 +15,7 @@ from homeassistant.helpers import selector
 
 from . import presets as presets_module
 from .const import (
+    CONF_AUTO_WINDOW_DETECTION,
     CONF_AWAY_PRESET,
     CONF_CLIMATE_ENTITIES,
     CONF_COOL_SWITCHES,
@@ -27,11 +28,13 @@ from .const import (
     CONF_HISTORY_DAYS_FOR_INERTIA,
     CONF_HUMIDIFIER_ENTITIES,
     CONF_HUMIDITY_SENSOR,
+    CONF_MAX_POWER_W,
     CONF_MAX_TEMP,
     CONF_MIN_OFF_SECONDS,
     CONF_MIN_ON_SECONDS,
     CONF_MIN_TEMP,
     CONF_OUTDOOR_TEMP_SENSOR,
+    CONF_POWER_ENTITIES,
     CONF_PRESENCE_ENTITIES,
     CONF_PRESENCE_PRESET,
     CONF_PRESETS_TEXT,
@@ -43,6 +46,7 @@ from .const import (
     DEFAULT_DRY_HUMIDITY_THRESHOLD,
     DEFAULT_FORECAST_REFRESH_MINUTES,
     DEFAULT_HISTORY_DAYS_FOR_INERTIA,
+    DEFAULT_MAX_POWER_W,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_OFF_SECONDS,
     DEFAULT_MIN_ON_SECONDS,
@@ -87,6 +91,10 @@ def _temp_number():
 
 def _seconds_number():
     return selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=3600, step=30, mode=selector.NumberSelectorMode.BOX))
+
+
+def _watts_number():
+    return selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=20000, step=50, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="W"))
 
 
 def _percent_number():
@@ -234,11 +242,14 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_PRESENCE_ENTITIES, default=[]): _entity(
                 ["binary_sensor", "person", "device_tracker"], multiple=True),
             vol.Optional(CONF_DOOR_WINDOW_ENTITIES, default=[]): _entity("binary_sensor", multiple=True),
+            vol.Optional(CONF_AUTO_WINDOW_DETECTION, default=False): selector.BooleanSelector(),
             vol.Optional(CONF_HISTORY_DAYS_FOR_INERTIA, default=DEFAULT_HISTORY_DAYS_FOR_INERTIA): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días")),
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=DEFAULT_FORECAST_REFRESH_MINUTES): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
             vol.Optional(CONF_DRY_HUMIDITY_THRESHOLD, default=DEFAULT_DRY_HUMIDITY_THRESHOLD): _percent_number(),
+            vol.Optional(CONF_POWER_ENTITIES, default=[]): _entity("sensor", device_class="power", multiple=True),
+            vol.Optional(CONF_MAX_POWER_W, default=DEFAULT_MAX_POWER_W): _watts_number(),
             vol.Optional(CONF_SIMULATE, default=True): selector.BooleanSelector(),
         })
         return self.async_show_form(step_id="options", data_schema=schema, description_placeholders={
@@ -249,7 +260,12 @@ class ClimateOrchestratorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 "automático que tenga, Auto o su único modo), un climate.* delegado que también sepa ventilar o "
                                 "deshumidificar se usa solo — solo si el equipo lo soporta de verdad. Deshumidificar solo se "
                                 "activa si además hay un sensor de humedad configurado (paso Sensores) y su lectura supera el "
-                                "umbral elegido."
+                                "umbral elegido.",
+            "window_note": "Detección automática de ventana abierta (opcional, desactivada por defecto): respaldo por caída/subida "
+                            "anómala de temperatura para ventanas sin sensor propio — nunca sustituye a un sensor real declarado arriba.",
+            "power_note": "Consumo eléctrico (opcional): sensores de potencia (W) de los actuadores de esta zona, sumados en vivo. "
+                           "Si además pones una potencia máxima, no se arrancan nuevos actuadores mientras la zona ya esté al límite "
+                           "— lo que ya estuviera encendido no se corta por esto."
         })
 
     @staticmethod
@@ -273,23 +289,34 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
     ellas solas como propiedad de la clase base; sobreescribirla a mano
     rompe el flujo entero con un 500 en cuanto se abre "Configurar" (asi
     se detecto: "no se pudo cargar el flujo de configuracion"). Se usa tal
-    cual, sin constructor propio."""
+    cual, sin constructor propio.
+
+    Un MENU por categorias en vez de un unico formulario gigante con los
+    ~25 campos a la vez (como era antes) — entras, editas SOLO la
+    categoria que te interesa (Actuadores, Presets, Limites...) y listo,
+    sin tener que revisar/volver a rellenar todo lo demas cada vez. Mismo
+    espiritu que versatile_thermostat. Cada categoria guarda y cierra el
+    flujo por su cuenta (`_save_and_close`) — para tocar otra categoria,
+    se vuelve a abrir "Configurar" desde cero."""
 
     async def async_step_init(self, user_input=None):
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["general", "actuators", "presets", "limits", "presence_window", "advanced"],
+        )
+
+    def _save_and_close(self, user_input: dict):
         current = {**self.config_entry.data}
-        errors: dict = {}
+        merged = {**current, **user_input}
+        self.hass.config_entries.async_update_entry(
+            self.config_entry, data=merged, title=merged.get("name", self.config_entry.title))
+        return self.async_create_entry(title="", data={})
 
+    async def async_step_general(self, user_input=None):
+        current = {**self.config_entry.data}
         if user_input is not None:
-            try:
-                presets_module.parse_presets(user_input[CONF_PRESETS_TEXT])
-            except ValueError:
-                errors["base"] = "invalid_presets"
-            else:
-                merged = {**current, **user_input}
-                self.hass.config_entries.async_update_entry(self.config_entry, data=merged, title=merged.get("name", self.config_entry.title))
-                return self.async_create_entry(title="", data={})
-
-        fields: dict = {
+            return self._save_and_close(user_input)
+        fields = {
             vol.Required("name", default=current.get("name", "")): str,
             vol.Required(CONF_PRIORITY, default=current.get(CONF_PRIORITY, "confort")): selector.SelectSelector(
                 selector.SelectSelectorConfig(options=PRIORITY_OPTIONS, mode=selector.SelectSelectorMode.LIST)),
@@ -297,28 +324,77 @@ class ClimateOrchestratorOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(CONF_HUMIDITY_SENSOR, default=current.get(CONF_HUMIDITY_SENSOR, "")): _entity("sensor"),
             vol.Optional(CONF_OUTDOOR_TEMP_SENSOR, default=current.get(CONF_OUTDOOR_TEMP_SENSOR, "")): _entity("sensor"),
             vol.Optional(CONF_WEATHER_ENTITY, default=current.get(CONF_WEATHER_ENTITY, "")): _entity("weather"),
+        }
+        return self.async_show_form(step_id="general", data_schema=vol.Schema(fields))
+
+    async def async_step_actuators(self, user_input=None):
+        current = {**self.config_entry.data}
+        if user_input is not None:
+            return self._save_and_close(user_input)
+        fields = {
             vol.Optional(CONF_CLIMATE_ENTITIES, default=current.get(CONF_CLIMATE_ENTITIES, [])): _entity("climate", multiple=True),
             vol.Optional(CONF_HEAT_SWITCHES, default=current.get(CONF_HEAT_SWITCHES, [])): _entity("switch", multiple=True),
             vol.Optional(CONF_COOL_SWITCHES, default=current.get(CONF_COOL_SWITCHES, [])): _entity("switch", multiple=True),
             vol.Optional(CONF_HUMIDIFIER_ENTITIES, default=current.get(CONF_HUMIDIFIER_ENTITIES, [])): _entity("humidifier", multiple=True),
+        }
+        return self.async_show_form(step_id="actuators", data_schema=vol.Schema(fields))
+
+    async def async_step_presets(self, user_input=None):
+        current = {**self.config_entry.data}
+        errors: dict = {}
+        if user_input is not None:
+            try:
+                presets_module.parse_presets(user_input[CONF_PRESETS_TEXT])
+            except ValueError:
+                errors["base"] = "invalid_presets"
+            else:
+                return self._save_and_close(user_input)
+        fields = {
             vol.Required(CONF_PRESETS_TEXT, default=current.get(CONF_PRESETS_TEXT, "Confort: 21/25, Ausente: 17/28")): str,
             vol.Required(CONF_PRESENCE_PRESET, default=current.get(CONF_PRESENCE_PRESET, "Confort")): str,
             vol.Required(CONF_AWAY_PRESET, default=current.get(CONF_AWAY_PRESET, "Ausente")): str,
+        }
+        return self.async_show_form(step_id="presets", data_schema=vol.Schema(fields), errors=errors)
+
+    async def async_step_limits(self, user_input=None):
+        current = {**self.config_entry.data}
+        if user_input is not None:
+            return self._save_and_close(user_input)
+        fields = {
             vol.Required(CONF_DEADBAND, default=current.get(CONF_DEADBAND, DEFAULT_DEADBAND)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=0.1, max=3, step=0.1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="°C")),
             vol.Required(CONF_MIN_TEMP, default=current.get(CONF_MIN_TEMP, DEFAULT_MIN_TEMP)): _temp_number(),
             vol.Required(CONF_MAX_TEMP, default=current.get(CONF_MAX_TEMP, DEFAULT_MAX_TEMP)): _temp_number(),
             vol.Optional(CONF_MIN_ON_SECONDS, default=current.get(CONF_MIN_ON_SECONDS, DEFAULT_MIN_ON_SECONDS)): _seconds_number(),
             vol.Optional(CONF_MIN_OFF_SECONDS, default=current.get(CONF_MIN_OFF_SECONDS, DEFAULT_MIN_OFF_SECONDS)): _seconds_number(),
+            vol.Optional(CONF_TARGET_HUMIDITY, default=current.get(CONF_TARGET_HUMIDITY, DEFAULT_TARGET_HUMIDITY)): _target_humidity_number(),
+        }
+        return self.async_show_form(step_id="limits", data_schema=vol.Schema(fields))
+
+    async def async_step_presence_window(self, user_input=None):
+        current = {**self.config_entry.data}
+        if user_input is not None:
+            return self._save_and_close(user_input)
+        fields = {
             vol.Optional(CONF_PRESENCE_ENTITIES, default=current.get(CONF_PRESENCE_ENTITIES, [])): _entity(
                 ["binary_sensor", "person", "device_tracker"], multiple=True),
             vol.Optional(CONF_DOOR_WINDOW_ENTITIES, default=current.get(CONF_DOOR_WINDOW_ENTITIES, [])): _entity("binary_sensor", multiple=True),
+            vol.Optional(CONF_AUTO_WINDOW_DETECTION, default=current.get(CONF_AUTO_WINDOW_DETECTION, False)): selector.BooleanSelector(),
+        }
+        return self.async_show_form(step_id="presence_window", data_schema=vol.Schema(fields))
+
+    async def async_step_advanced(self, user_input=None):
+        current = {**self.config_entry.data}
+        if user_input is not None:
+            return self._save_and_close(user_input)
+        fields = {
             vol.Optional(CONF_HISTORY_DAYS_FOR_INERTIA, default=current.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=3, max=30, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="días")),
             vol.Optional(CONF_FORECAST_REFRESH_MINUTES, default=current.get(CONF_FORECAST_REFRESH_MINUTES, DEFAULT_FORECAST_REFRESH_MINUTES)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=2, max=60, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="min")),
             vol.Optional(CONF_DRY_HUMIDITY_THRESHOLD, default=current.get(CONF_DRY_HUMIDITY_THRESHOLD, DEFAULT_DRY_HUMIDITY_THRESHOLD)): _percent_number(),
-            vol.Optional(CONF_TARGET_HUMIDITY, default=current.get(CONF_TARGET_HUMIDITY, DEFAULT_TARGET_HUMIDITY)): _target_humidity_number(),
+            vol.Optional(CONF_POWER_ENTITIES, default=current.get(CONF_POWER_ENTITIES, [])): _entity("sensor", device_class="power", multiple=True),
+            vol.Optional(CONF_MAX_POWER_W, default=current.get(CONF_MAX_POWER_W, DEFAULT_MAX_POWER_W)): _watts_number(),
             vol.Optional(CONF_SIMULATE, default=current.get(CONF_SIMULATE, True)): selector.BooleanSelector(),
         }
-        return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)
+        return self.async_show_form(step_id="advanced", data_schema=vol.Schema(fields))

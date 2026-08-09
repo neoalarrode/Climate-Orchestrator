@@ -131,9 +131,12 @@ directly on the thermostat), but it's restored across restarts too.
 ## 6. Editing a zone
 
 Settings → Devices & services → Climate Orchestrator → the zone you want
-→ **Configure**. A single form opens with every field pre-filled (presets
-are edited as the same free-text format from the wizard). Saving reloads
-the whole zone.
+→ **Configure**. A **category menu** opens — General, Actuators, Presets,
+Safety limits, Presence & window, Advanced — instead of one giant form
+with everything at once: go into just the one you need, edit it, done
+(presets are edited as the same free-text format from the wizard). To
+touch another category, open "Configure" again. Saving any of them
+reloads the whole zone.
 
 ## 7. Doors and windows
 
@@ -308,7 +311,50 @@ specific mode to run, just the zone not being off or door/window-paused.
   `climate.*`'s `dry` mode (see point 10) — humidifying fills the gap
   that was missing: raising humidity when it's too low.
 
-## 14. Mode vs. preset vs. temperature
+## 14. Sensor watchdog and problem detection
+
+Four extra protections, all transparent (never act blindly) and visible
+as attributes on the zone entity:
+
+- **External sensor smoothing**: the reading is smoothed with an
+  exponential moving average (2-minute half-life) before being used to
+  decide — a one-off noise spike shouldn't flip the zone's decision.
+- **"Frozen" sensor**: if the external sensor stops giving genuinely NEW
+  readings (even if its state still looks valid — e.g. a dead battery,
+  without ever going `unavailable`), the zone keeps using the last
+  smoothed reading for up to 90 minutes — flagged in `reason` and the
+  `sensor_stale` attribute — instead of suddenly losing safety-limit
+  protection just because the sensor got stuck. Past that window, it's
+  treated as genuinely unavailable, same as always.
+- **Auto window-open detection without a dedicated sensor** (optional,
+  off by default — wizard step 7 or "Configure" → Presence & window):
+  backup for windows without their own sensor. Analyzes the outdoor
+  sensor's slope (°C/hour, smoothed) and pauses the zone if it detects an
+  anomalous drop/rise in the OPPOSITE direction from what's being asked
+  for (sudden cooling while heating is wanted, or vice versa) — never
+  replaces a declared real sensor, only adds to it. Current slope visible
+  in `window_slope_deg_h`.
+- **Possible equipment failure**: if the zone has spent 30 straight
+  minutes genuinely calling for heat/cool and the temperature has barely
+  moved as expected, it's flagged in the `equipment_failure_suspected`
+  attribute (plus a logged warning) — a stuck valve, a relay that won't
+  switch... Only informs, never acts on its own, and isn't the same as
+  the per-delegate idle learning (point 12, which catches the opposite:
+  equipment that won't stop on its own).
+
+## 15. Power consumption and maximum power
+
+Optional (wizard step 7, or "Configure" → Advanced): declare this zone's
+actuators' power sensors (W) and they're summed live in the
+`zone_power_w` attribute.
+
+If you also set a **maximum power**, a simple overload-prevention kicks
+in: while the zone is already at (or over) that power, NEW actuators
+aren't started until there's room — reflected in `reason` ("postponed:
+current power... ≥ maximum..."). Whatever's already on isn't cut off by
+this, it just avoids adding more while there's no room.
+
+## 16. Mode vs. preset vs. temperature
 
 None of these expire on their own anymore — all three are **standing**
 choices, each restored across restarts:
@@ -320,7 +366,7 @@ choices, each restored across restarts:
   switches the zone to the "Manual" preset (see point 5) — it keeps that
   temperature until you switch to another preset yourself.
 
-## 15. Learned thermal inertia
+## 17. Learned thermal inertia
 
 Learned from both actuator types, not just switches: a plain `switch.*`
 uses its own on/off history directly; a delegated `climate.*` uses the
@@ -330,7 +376,7 @@ never does, that zone simply keeps conservative defaults (flagged
 `thermal_model_reliable: false` in the entity's attributes) — never a
 made-up number.
 
-## 16. Simulation mode
+## 18. Simulation mode
 
 With "Simulation mode" on for a zone (default), the integration computes
 and publishes what it would do (visible in the entity's attributes), but

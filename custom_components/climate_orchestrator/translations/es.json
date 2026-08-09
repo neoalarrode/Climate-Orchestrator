@@ -61,9 +61,12 @@
         "data": {
           "presence_entities": "Entidades de presencia",
           "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
+          "auto_window_detection": "Detectar ventana abierta automáticamente (respaldo para ventanas sin sensor)",
           "history_days_for_inertia": "Días de histórico para la inercia térmica",
           "forecast_refresh_minutes": "Frecuencia de recálculo de la previsión",
           "dry_humidity_threshold": "Umbral de humedad para deshumidificar",
+          "power_entities": "Sensores de potencia (W) de los actuadores de esta zona (opcional)",
+          "max_power_w": "Potencia máxima (W) — pospone nuevos arranques por encima de esto (opcional)",
           "simulate": "Modo simulación (nunca toca actuadores reales)"
         }
       }
@@ -75,32 +78,70 @@
   "options": {
     "step": {
       "init": {
-        "title": "Editar zona",
+        "menu_options": {
+          "general": "General",
+          "actuators": "Actuadores",
+          "presets": "Presets",
+          "limits": "Límites de seguridad",
+          "presence_window": "Presencia y ventana",
+          "advanced": "Avanzado"
+        }
+      },
+      "general": {
+        "title": "General",
         "data": {
           "name": "Nombre de la zona",
           "priority": "Prioridad",
           "current_temp_sensor": "Sensor de temperatura",
           "humidity_sensor": "Sensor de humedad (opcional)",
           "outdoor_temp_sensor": "Sensor exterior propio de esta zona (opcional)",
-          "weather_entity": "Entidad weather.* con previsión horaria (opcional)",
+          "weather_entity": "Entidad weather.* con previsión horaria (opcional)"
+        }
+      },
+      "actuators": {
+        "title": "Actuadores",
+        "data": {
           "climate_entities": "Entidades climate.* existentes en las que delegar",
-          "humidifier_entities": "Entidades humidifier.* existentes en las que delegar (opcional)",
           "heat_switches": "Switches de calefacción",
           "cool_switches": "Switches de refrigeración",
+          "humidifier_entities": "Entidades humidifier.* existentes en las que delegar (opcional)"
+        }
+      },
+      "presets": {
+        "title": "Presets",
+        "data": {
           "presets_text": "Presets («Nombre: temperatura», separados por comas)",
           "presence_preset": "Nombre del preset con presencia",
-          "away_preset": "Nombre del preset sin presencia",
+          "away_preset": "Nombre del preset sin presencia"
+        }
+      },
+      "limits": {
+        "title": "Límites de seguridad",
+        "data": {
           "deadband": "Histéresis",
           "min_temp": "Mínimo (suelo siempre aplicado)",
           "max_temp": "Máximo (techo siempre aplicado)",
           "min_on_seconds": "Tiempo mínimo encendido (s)",
           "min_off_seconds": "Tiempo mínimo apagado (s)",
-          "target_humidity": "Humedad objetivo (%) — un único valor por zona",
+          "target_humidity": "Humedad objetivo (%) — un único valor por zona"
+        }
+      },
+      "presence_window": {
+        "title": "Presencia y ventana",
+        "data": {
           "presence_entities": "Entidades de presencia",
           "door_window_entities": "Sensores de puerta/ventana (pausa al instante si se abren)",
+          "auto_window_detection": "Detectar ventana abierta automáticamente (respaldo para ventanas sin sensor)"
+        }
+      },
+      "advanced": {
+        "title": "Avanzado",
+        "data": {
           "history_days_for_inertia": "Días de histórico para la inercia térmica",
           "forecast_refresh_minutes": "Frecuencia de recálculo de la previsión",
           "dry_humidity_threshold": "Umbral de humedad para deshumidificar",
+          "power_entities": "Sensores de potencia (W) de los actuadores de esta zona (opcional)",
+          "max_power_w": "Potencia máxima (W) — pospone nuevos arranques por encima de esto (opcional)",
           "simulate": "Modo simulación (nunca toca actuadores reales)"
         }
       }

@@ -61,9 +61,12 @@
         "data": {
           "presence_entities": "Presence entities",
           "door_window_entities": "Door/window sensors (pauses instantly when open)",
+          "auto_window_detection": "Auto-detect open window (backup for windows without a sensor)",
           "history_days_for_inertia": "History days for thermal inertia",
           "forecast_refresh_minutes": "Forecast refresh interval",
           "dry_humidity_threshold": "Humidity threshold for dry mode",
+          "power_entities": "Power sensors (W) for this zone's actuators (optional)",
+          "max_power_w": "Maximum power (W) — pauses new activations above this (optional)",
           "simulate": "Simulation mode (never touches real actuators)"
         }
       }
@@ -75,32 +78,70 @@
   "options": {
     "step": {
       "init": {
-        "title": "Edit zone",
+        "menu_options": {
+          "general": "General",
+          "actuators": "Actuators",
+          "presets": "Presets",
+          "limits": "Safety limits",
+          "presence_window": "Presence & window",
+          "advanced": "Advanced"
+        }
+      },
+      "general": {
+        "title": "General",
         "data": {
           "name": "Zone name",
           "priority": "Priority",
           "current_temp_sensor": "Temperature sensor",
           "humidity_sensor": "Humidity sensor (optional)",
           "outdoor_temp_sensor": "This zone's own outdoor sensor (optional)",
-          "weather_entity": "weather.* entity with hourly forecast (optional)",
+          "weather_entity": "weather.* entity with hourly forecast (optional)"
+        }
+      },
+      "actuators": {
+        "title": "Actuators",
+        "data": {
           "climate_entities": "Existing climate.* entities to delegate to",
-          "humidifier_entities": "Existing humidifier.* entities to delegate to (optional)",
           "heat_switches": "Heating switches",
           "cool_switches": "Cooling switches",
+          "humidifier_entities": "Existing humidifier.* entities to delegate to (optional)"
+        }
+      },
+      "presets": {
+        "title": "Presets",
+        "data": {
           "presets_text": "Presets (\"Name: temperature\", comma-separated)",
           "presence_preset": "Preset name when present",
-          "away_preset": "Preset name when absent",
+          "away_preset": "Preset name when absent"
+        }
+      },
+      "limits": {
+        "title": "Safety limits",
+        "data": {
           "deadband": "Hysteresis",
           "min_temp": "Minimum (always enforced floor)",
           "max_temp": "Maximum (always enforced ceiling)",
           "min_on_seconds": "Minimum ON time (s)",
           "min_off_seconds": "Minimum OFF time (s)",
-          "target_humidity": "Target humidity (%) — single value per zone",
+          "target_humidity": "Target humidity (%) — single value per zone"
+        }
+      },
+      "presence_window": {
+        "title": "Presence & window",
+        "data": {
           "presence_entities": "Presence entities",
           "door_window_entities": "Door/window sensors (pauses instantly when open)",
+          "auto_window_detection": "Auto-detect open window (backup for windows without a sensor)"
+        }
+      },
+      "advanced": {
+        "title": "Advanced",
+        "data": {
           "history_days_for_inertia": "History days for thermal inertia",
           "forecast_refresh_minutes": "Forecast refresh interval",
           "dry_humidity_threshold": "Humidity threshold for dry mode",
+          "power_entities": "Power sensors (W) for this zone's actuators (optional)",
+          "max_power_w": "Maximum power (W) — pauses new activations above this (optional)",
           "simulate": "Simulation mode (never touches real actuators)"
         }
       }

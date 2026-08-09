@@ -138,9 +138,13 @@ termostato), pero se restaura igual tras un reinicio.
 ## 6. Editar una zona
 
 Ajustes → Dispositivos y servicios → Climate Orchestrator → la zona que
-quieras → **Configurar**. Se abre un único formulario con todos los
-campos precargados (los presets se editan como el mismo texto libre del
-asistente). Al guardar, la zona se recarga entera.
+quieras → **Configurar**. Se abre un **menú por categorías** — General,
+Actuadores, Presets, Límites de seguridad, Presencia y ventana,
+Avanzado — en vez de un único formulario gigante con todo a la vez:
+entras solo en la que te interesa, la editas y listo (los presets se
+editan como el mismo texto libre del asistente). Para tocar otra
+categoría, vuelves a abrir "Configurar". Al guardar cualquiera de ellas,
+la zona se recarga entera.
 
 ## 7. Puertas y ventanas
 
@@ -326,7 +330,53 @@ que la zona no esté apagada ni en pausa por puerta/ventana.
   un `climate.*` delegado (ver punto 10) — humidificar rellena el hueco
   que faltaba, subir la humedad cuando está demasiado baja.
 
-## 14. Modo vs. preset vs. temperatura
+## 14. Vigilancia del sensor y detección de problemas
+
+Cuatro protecciones adicionales, todas transparentes (nunca actúan a
+ciegas) y visibles como atributos de la entidad de la zona:
+
+- **Suavizado del sensor externo**: la lectura se suaviza con una media
+  móvil exponencial (vida media de 2 minutos) antes de usarse para
+  decidir — un pico de ruido puntual del sensor no debe hacer que la
+  zona cambie de idea de golpe.
+- **Sensor "congelado"**: si el sensor externo deja de dar lecturas
+  NUEVAS de verdad (aunque su estado siga pareciendo válido — p.ej. una
+  batería agotada, sin llegar a marcarse `unavailable`), la zona sigue
+  usando la última lectura suavizada durante hasta 90 minutos —
+  marcándolo en `reason` y en el atributo `sensor_stale` — en vez de
+  perder de golpe la protección de los límites de seguridad solo porque
+  el sensor se quedó colgado. Pasado ese margen, se da por no disponible
+  de verdad, igual que siempre.
+- **Detección de ventana abierta sin sensor dedicado** (opcional,
+  desactivada por defecto — paso 7 del asistente o "Configurar" →
+  Presencia y ventana): respaldo por si tienes ventanas sin sensor
+  propio. Analiza la pendiente del sensor exterior (°C/hora, suavizada) y
+  pausa la zona si detecta una caída/subida anómala en la dirección
+  CONTRARIA a lo que se está pidiendo (fría de golpe pidiendo calor, o al
+  revés) — nunca sustituye a un sensor real declarado, solo se suma.
+  Pendiente actual visible en `window_slope_deg_h`.
+- **Posible fallo del equipo**: si la zona lleva 30 minutos seguidos
+  pidiendo calor/frío de verdad y la temperatura apenas se ha movido lo
+  mínimo esperable, se marca como sospechoso en el atributo
+  `equipment_failure_suspected` (y se registra un aviso) — una válvula
+  atascada, un relé que no conmuta... Solo informa, nunca actúa por su
+  cuenta ni sustituye al aprendizaje de reposo por delegado (punto 12,
+  que detecta justo lo contrario: un equipo que no se para solo).
+
+## 15. Consumo eléctrico y potencia máxima
+
+Opcional (paso 7 del asistente, o "Configurar" → Avanzado): declara los
+sensores de potencia (W) de los actuadores de esta zona y se suman en
+vivo en el atributo `zone_power_w`.
+
+Si además configuras una **potencia máxima**, se activa una prevención de
+sobrecarga sencilla: mientras la zona ya esté al límite (o por encima) de
+esa potencia, no se arrancan actuadores NUEVOS hasta que haya margen —
+queda reflejado en `reason` ("pospuesto: potencia actual... ≥
+máximo..."). Lo que ya estuviera encendido no se corta de golpe por
+esto, solo se evita sumar más mientras no haya sitio.
+
+## 16. Modo vs. preset vs. temperatura
 
 Aquí ya no hay ninguna anulación con caducidad — los tres son elecciones
 **persistentes**, cada una se restaura sola tras un reinicio:
@@ -339,7 +389,7 @@ Aquí ya no hay ninguna anulación con caducidad — los tres son elecciones
   termostato: pasa la zona al preset "Manual" (ver punto 5) — se queda
   con esa temperatura hasta que tú mismo cambies a otro preset.
 
-## 15. Inercia térmica aprendida
+## 17. Inercia térmica aprendida
 
 Se aprende de los dos tipos de actuador, no solo de switch: con un
 `switch.*` propio se usa directamente su historial de encendido/apagado;
@@ -350,7 +400,7 @@ reporta, esa zona se queda con valores conservadores por defecto (marcado
 `thermal_model_reliable: false` en los atributos de la entidad) — nunca
 se inventa una cifra.
 
-## 16. Modo simulación
+## 18. Modo simulación
 
 Con "Modo simulación" activo en una zona (por defecto), la integración
 calcula y publica lo que haría (visible en los atributos de la entidad),

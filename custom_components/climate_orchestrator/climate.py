@@ -83,8 +83,9 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util, slugify
 
-from . import outdoor, presets as presets_module, scheduler, thermal_model
+from . import ema as ema_module, outdoor, presets as presets_module, scheduler, thermal_model, window_algorithm
 from .const import (
+    CONF_AUTO_WINDOW_DETECTION,
     CONF_CLIMATE_ENTITIES,
     CONF_COOL_SWITCHES,
     CONF_CURRENT_TEMP_SENSOR,
@@ -96,11 +97,13 @@ from .const import (
     CONF_HISTORY_DAYS_FOR_INERTIA,
     CONF_HUMIDIFIER_ENTITIES,
     CONF_HUMIDITY_SENSOR,
+    CONF_MAX_POWER_W,
     CONF_MAX_TEMP,
     CONF_MIN_OFF_SECONDS,
     CONF_MIN_ON_SECONDS,
     CONF_MIN_TEMP,
     CONF_OUTDOOR_TEMP_SENSOR,
+    CONF_POWER_ENTITIES,
     CONF_PRESENCE_ENTITIES,
     CONF_PRESENCE_PRESET,
     CONF_AWAY_PRESET,
@@ -114,6 +117,7 @@ from .const import (
     DEFAULT_FORECAST_REFRESH_MINUTES,
     DEFAULT_HISTORY_DAYS_FOR_INERTIA,
     DEFAULT_MAX_HUMIDITY,
+    DEFAULT_MAX_POWER_W,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_HUMIDITY,
     DEFAULT_MIN_OFF_SECONDS,
@@ -123,6 +127,25 @@ from .const import (
     DEFAULT_TARGET_HUMIDITY,
     DOMAIN,
 )
+
+# Vida media (segundos) del suavizado EMA del sensor externo (ver ema.py)
+# — un pico de ruido puntual no debe hacer que el motor decida algo
+# distinto de golpe. Si el sensor deja de dar lecturas NUEVAS de verdad
+# (aunque su `state` siga pareciendo valido, "congelado" sin marcarse
+# unavailable), se sigue confiando en el ultimo valor suavizado — marcado
+# como `sensor_stale` en razon/atributos — hasta
+# STALE_SENSOR_HARD_TIMEOUT_SECONDS; pasado ese limite, se da por no
+# disponible de verdad (mismo comportamiento que hasta ahora, dejando de
+# actuar del todo).
+TEMP_EMA_HALFLIFE_SECONDS = 120
+STALE_SENSOR_HARD_TIMEOUT_SECONDS = 5400  # 90 min
+
+# Deteccion de fallo del equipo (ver `_check_equipment_failure`): si
+# llevamos esto pidiendo calor/frio de verdad sin que la temperatura se
+# mueva lo minimo esperado, es sospechoso -- solo informa, nunca actua
+# por su cuenta.
+EQUIPMENT_FAILURE_DETECTION_MINUTES = 30
+EQUIPMENT_FAILURE_MIN_DELTA_DEG = 0.3
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -256,6 +279,21 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             self._attr_hvac_mode if self._attr_hvac_mode != HVACMode.OFF else None
         )
 
+        # Suavizado EMA del sensor externo + margen de gracia si se queda
+        # "congelado" (ver TEMP_EMA_HALFLIFE_SECONDS/STALE_SENSOR_* arriba,
+        # y `_read_current_temp`).
+        self._temp_ema = ema_module.Ema(TEMP_EMA_HALFLIFE_SECONDS)
+        self._sensor_stale = False
+
+        # Deteccion de ventana abierta SIN sensor dedicado (respaldo
+        # opcional, ver CONF_AUTO_WINDOW_DETECTION y window_algorithm.py).
+        self._window_detector = window_algorithm.WindowSlopeDetector()
+
+        # Deteccion de posible fallo del equipo — solo informa (ver
+        # `_check_equipment_failure`).
+        self._equipment_run: tuple[str, object, float] | None = None
+        self._equipment_failure_suspected = False
+
     # ---------------------------------------------------------- estado ----
 
     @property
@@ -288,6 +326,19 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             # consigna y por eso se apagan de verdad, en vez de mantenerlos
             # en su ultimo modo activo. Persiste tras reinicios.
             "delegate_needs_explicit_off": sorted(self._delegate_needs_explicit_off),
+            # Sensor externo sin lectura NUEVA de verdad (aunque su
+            # `state` siga pareciendo valido) — ver `_read_current_temp`.
+            "sensor_stale": self._sensor_stale,
+            # Deteccion de ventana SIN sensor dedicado, si esta activada
+            # (ver CONF_AUTO_WINDOW_DETECTION) — pendiente actual del
+            # sensor exterior en °C/h.
+            "window_slope_deg_h": self._window_detector.slope_deg_h,
+            # Posible fallo del equipo (ver _check_equipment_failure) —
+            # solo informativo, nunca cambia la decision por su cuenta.
+            "equipment_failure_suspected": self._equipment_failure_suspected,
+            # Potencia sumada en vivo de CONF_POWER_ENTITIES (W), None si
+            # no hay ninguno declarado.
+            "zone_power_w": self._zone_power_w(),
         }
 
     # ---------------------------------------------------- capacidad real ----
@@ -507,6 +558,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             *(self.zone.get(CONF_DOOR_WINDOW_ENTITIES) or []),
             *(self.zone.get(CONF_CLIMATE_ENTITIES) or []),
             *(self.zone.get(CONF_HUMIDIFIER_ENTITIES) or []),
+            *(self.zone.get(CONF_POWER_ENTITIES) or []),
         ] if e]
         if watched:
             self.async_on_remove(async_track_state_change_event(self.hass, watched, self._handle_reactive_event))
@@ -538,16 +590,41 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     # ----------------------------------------------------- lecturas HA ----
 
     def _read_current_temp(self) -> float | None:
+        """Lectura EN VIVO del sensor externo, suavizada con una media
+        movil exponencial (EMA, ver ema.py y TEMP_EMA_HALFLIFE_SECONDS)
+        para no reaccionar a un pico de ruido puntual del sensor.
+
+        Ademas, un margen de gracia si el sensor deja de dar lecturas
+        NUEVAS de verdad aunque su `state` siga pareciendo valido —
+        "congelado" sin llegar a marcarse unavailable, p.ej. una bateria
+        agotada. Hasta STALE_SENSOR_HARD_TIMEOUT_SECONDS se sigue
+        confiando en el ultimo valor suavizado (marcado `_sensor_stale`
+        para que se note en `reason`/atributos) en vez de dejar de golpe
+        de proteger los limites de seguridad de la zona; pasado eso, se
+        da por no disponible de verdad, igual que antes."""
         sensor = self.zone.get(CONF_CURRENT_TEMP_SENSOR)
         if not sensor:
             return None
         state = self.hass.states.get(sensor)
-        if state is None or state.state in ("unknown", "unavailable"):
-            return None
-        try:
-            return float(state.state)
-        except (TypeError, ValueError):
-            return None
+        now = dt_util.utcnow()
+
+        if state is not None and state.state not in ("unknown", "unavailable"):
+            try:
+                raw = float(state.state)
+            except (TypeError, ValueError):
+                raw = None
+            if raw is not None:
+                self._sensor_stale = False
+                return self._temp_ema.update(raw, state.last_updated or now)
+
+        # Sin lectura valida ahora mismo: ver si todavia hay margen de
+        # gracia sobre la ultima lectura suavizada.
+        age = self._temp_ema.age_seconds(now)
+        if age is not None and age <= STALE_SENSOR_HARD_TIMEOUT_SECONDS:
+            self._sensor_stale = True
+            return self._temp_ema.value
+        self._sensor_stale = False  # ni siquiera queda margen que ofrecer — de verdad no disponible
+        return None
 
     def _presence_now(self) -> bool | None:
         """Presencia FISICA de la zona AHORA MISMO — pensado sobre todo
@@ -608,12 +685,70 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             return "fan_only", "dentro de margen: ventilando en vez de apagar del todo"
         return "idle", None
 
-    def _door_window_open(self) -> bool:
+    def _real_door_window_open(self) -> bool:
         for e in self.zone.get(CONF_DOOR_WINDOW_ENTITIES) or []:
             state = self.hass.states.get(e)
             if state is not None and state.state == "on":
                 return True
         return False
+
+    def _check_equipment_failure(self, action: str, current_temp: float, now) -> None:
+        """Deteccion simple de posible fallo del equipo — nada de caja
+        negra: si llevamos EQUIPMENT_FAILURE_DETECTION_MINUTES seguidos
+        pidiendo calor/frio de verdad (no reposo, no dry/fan_only) y la
+        temperatura EXTERNA apenas se ha movido en la direccion esperada,
+        es sospechoso — una valvula atascada, un rele que no conmuta...
+        Solo informa (log + atributo `equipment_failure_suspected`),
+        nunca actua por su cuenta ni sustituye al aprendizaje de
+        sobre-consigna (`_check_delegate_overshoot`, que es lo contrario:
+        el equipo no se para solo)."""
+        if action not in ("heat", "cool"):
+            self._equipment_run = None
+            self._equipment_failure_suspected = False
+            return
+        if self._equipment_run is None or self._equipment_run[0] != action:
+            self._equipment_run = (action, now, current_temp)
+            return
+
+        run_action, start_ts, start_temp = self._equipment_run
+        elapsed_min = (now - start_ts).total_seconds() / 60
+        if elapsed_min < EQUIPMENT_FAILURE_DETECTION_MINUTES:
+            return
+
+        delta = current_temp - start_temp
+        progressed = delta >= EQUIPMENT_FAILURE_MIN_DELTA_DEG if run_action == "heat" \
+            else -delta >= EQUIPMENT_FAILURE_MIN_DELTA_DEG
+        if progressed:
+            # se ha movido de verdad — reinicia la ventana de vigilancia
+            # desde aqui, en vez de arrastrar el punto de partida original.
+            self._equipment_run = (run_action, now, current_temp)
+            self._equipment_failure_suspected = False
+        elif not self._equipment_failure_suspected:
+            self._equipment_failure_suspected = True
+            _LOGGER.warning(
+                "%s: llevo %d min pidiendo %s sin que la temperatura se mueva lo esperado "
+                "(%.1f°C ahora, %.1f°C al empezar) — posible fallo del equipo",
+                self.zone.get("name"), int(elapsed_min), run_action, current_temp, start_temp,
+            )
+
+    def _zone_power_w(self) -> float | None:
+        """Suma en vivo de los sensores de potencia declarados (ver
+        CONF_POWER_ENTITIES) — None si no hay ninguno declarado."""
+        entities = self.zone.get(CONF_POWER_ENTITIES) or []
+        if not entities:
+            return None
+        total = 0.0
+        any_valid = False
+        for e in entities:
+            state = self.hass.states.get(e)
+            if state is None or state.state in ("unknown", "unavailable"):
+                continue
+            try:
+                total += float(state.state)
+                any_valid = True
+            except (TypeError, ValueError):
+                continue
+        return total if any_valid else None
 
     def _preset_value(self, preset_name: str, side: str) -> float | None:
         """Consigna VIVA (calor o frio) de un preset — se busca en su
@@ -708,15 +843,29 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             preset_heat = self._preset_value(preset_name, "heat") if wants_heat else None
             preset_cool = self._preset_value(preset_name, "cool") if wants_cool else None
 
+        # Deteccion de ventana SIN sensor dedicado (respaldo opcional, ver
+        # CONF_AUTO_WINDOW_DETECTION/window_algorithm.py) — se actualiza
+        # cada ciclo con la lectura EXTERNA actual, para saber cuando la
+        # zona pide calor/frio de verdad (sin eso no puede distinguir una
+        # bajada normal de una anomala en contra de lo pedido).
+        window_alert = False
+        if self.zone.get(CONF_AUTO_WINDOW_DETECTION):
+            window_alert = self._window_detector.update(current_temp, dt_util.utcnow(), wants_heat, wants_cool)
+
+        real_door_open = self._real_door_window_open()
+
         force_off = False
         if self._attr_hvac_mode == HVACMode.OFF:
             action = "idle"
             heat_target, cool_target = preset_heat, preset_cool
             self._reason = "apagado desde el termostato"
-        elif self._door_window_open():
+        elif real_door_open or window_alert:
             action = "idle"
             heat_target, cool_target = preset_heat, preset_cool
-            self._reason = "puerta/ventana abierta: en pausa"
+            self._reason = "puerta/ventana abierta: en pausa" if real_door_open else (
+                f"posible ventana abierta (pendiente {self._window_detector.slope_deg_h:.1f}°C/h en contra "
+                "de lo pedido, sin sensor dedicado): en pausa"
+            )
             # A diferencia de un "idle" normal (que si respeta el
             # anti-ciclado: no urge, solo esta dentro de margen), una
             # puerta/ventana abierta SI es urgente: cortar de verdad ya,
@@ -764,6 +913,26 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 if smart_reason:
                     action = smart_action
                     self._reason += f" — {smart_reason}"
+
+        if self._sensor_stale:
+            self._reason += " — aviso: sensor externo sin lectura nueva, usando la última suavizada"
+
+        # Deteccion de posible fallo del equipo — solo informa (log +
+        # atributo), nunca cambia `action`.
+        self._check_equipment_failure(action, current_temp, dt_util.utcnow())
+
+        # Prevencion simple de sobrecarga (ver CONF_MAX_POWER_W): si la
+        # zona YA esta al limite (o por encima) de potencia configurada y
+        # esto seria un arranque NUEVO (no estaba ya calentando/enfriando
+        # el ciclo anterior), se pospone — lo que ya estuviera encendido
+        # no se corta por esto, solo se evita sumar mas.
+        max_power = self.zone.get(CONF_MAX_POWER_W) or 0
+        if action in ("heat", "cool") and max_power > 0:
+            already_active = self._attr_hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
+            zone_power = self._zone_power_w()
+            if not already_active and zone_power is not None and zone_power >= float(max_power):
+                self._reason += f" — pospuesto: potencia actual {zone_power:.0f}W ≥ máximo {float(max_power):.0f}W"
+                action = "idle"
 
         # Solo el tramo normal (Auto/calor/frio decidiendo solo, NUNCA
         # apagado a mano ni puerta/ventana ni un modo dry/fan_only fijado

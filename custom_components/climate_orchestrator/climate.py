@@ -901,7 +901,16 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         # actuadores que no tengan ni sensor propio ni potencia estimada
         # declarada (CONF_ACTUATOR_POWER): para esos ya no hace falta
         # aprender nada, se usan tal cual.
-        home_power_sensor = self.zone.get(CONF_HOME_POWER_SENSOR, "")
+        #
+        # Sensor general de consumo de la casa: el declarado a mano en
+        # esta zona (CONF_HOME_POWER_SENSOR) tiene prioridad si existe;
+        # sin el, se cae AUTOMATICAMENTE al que ya tiene declarado Battery
+        # Orchestrator (ver grid_signal.py) — asi el aprendizaje funciona
+        # solo, sin que el usuario tenga que declarar el mismo sensor dos
+        # veces en dos integraciones distintas. Sin ninguno de los dos
+        # (ni aqui ni Battery Orchestrator instalado), no se aprende nada
+        # — nunca una estimacion inventada.
+        home_power_sensor = self.zone.get(CONF_HOME_POWER_SENSOR, "") or grid_signal.read(self.hass).get("home_power_sensor") or ""
         actuator_power = self.zone.get(CONF_ACTUATOR_POWER) or {}
         entities_to_learn = [
             e for e in self._all_declared_actuators()

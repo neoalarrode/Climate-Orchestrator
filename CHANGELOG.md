@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.10.1
+- Nuevo: `CONF_HOME_POWER_SENSOR` (el sensor general de consumo de la casa que usa `power_model.py` para aprender el consumo de cada actuador) ya no hace falta declararlo a mano si Battery Orchestrator está instalado — se detecta automáticamente el que ese addon ya tiene declarado (`sensor.battery_orchestrator_grid_signal`, atributo `home_power_sensor`). El campo declarado a mano sigue teniendo prioridad si existe; sin ninguno de los dos, no se aprende nada, como antes.
+
 ## 0.10.0
 
 - Nuevo: integración automática con **Battery Orchestrator** (si está instalado), sin ninguna configuración manual en ningún lado — se detecta por un `entity_id` fijo (`sensor.battery_orchestrator_grid_signal`), y esta zona se marca a sí misma para que Battery Orchestrator también la encuentre sola.

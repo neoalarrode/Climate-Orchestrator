@@ -83,7 +83,7 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util, slugify
 
-from . import ema as ema_module, outdoor, power_model, presets as presets_module, scheduler, thermal_model, window_algorithm
+from . import ema as ema_module, grid_signal, outdoor, power_model, presets as presets_module, scheduler, thermal_model, window_algorithm
 from .const import (
     CONF_AUTO_WINDOW_DETECTION,
     CONF_CLIMATE_ENTITIES,
@@ -362,6 +362,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             # `zone_power_breakdown` detalla cada actuador que aporta algo.
             "zone_power_w": zone_power_w,
             "zone_power_breakdown": zone_power_breakdown,
+            # Marcador para que Battery Orchestrator, si esta instalado,
+            # encuentre esta zona SOLO (ver climate_link.py de ese addon):
+            # no es una propiedad de esta zona en si, solo un "aqui estoy"
+            # discreto — no cambia nada en como funciona esta integracion
+            # por si sola.
+            "climate_orchestrator_zone": True,
+            # Ultima señal leida de Battery Orchestrator (ver
+            # grid_signal.py) — None/None si no esta instalado. Solo
+            # diagnostico: la decision real ya se tomo con esto mismo en
+            # `_async_decide_and_act`, esto es para poder comprobarlo.
+            **{f"grid_{k}": v for k, v in grid_signal.read(self.hass).items()},
             # TPI (ver scheduler.py `tpi_on_percent`): % del ciclo que los
             # switches del lado activo deben estar encendidos ahora mismo.
             # None si ese lado no esta activo (switches apagados sin mas).
@@ -587,6 +598,13 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             *(self.zone.get(CONF_CLIMATE_ENTITIES) or []),
             *(self.zone.get(CONF_HUMIDIFIER_ENTITIES) or []),
             *(c.get("sensor") for c in (self.zone.get(CONF_ACTUATOR_POWER) or {}).values() if c.get("sensor")),
+            # Señal de Battery Orchestrator (ver grid_signal.py) — si esta
+            # instalado, cada cambio de tramo/precio/excedente solar
+            # dispara una reevaluacion INMEDIATA en prioridad "ahorro", en
+            # vez de esperar al proximo ciclo periodico. Escucharla aqui no
+            # falla si la entidad no existe todavia: async_track_state_change_event
+            # simplemente no dispara nunca para algo que no existe.
+            grid_signal.GRID_SIGNAL_ENTITY_ID,
         ] if e]
         if watched:
             self.async_on_remove(async_track_state_change_event(self.hass, watched, self._handle_reactive_event))
@@ -821,6 +839,26 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             any_known = True
         return (total if any_known else None), breakdown
 
+    def _zone_estimated_power_w(self) -> float | None:
+        """A diferencia de `_zone_power_w` (solo actuadores YA activos),
+        esto suma la potencia de TODOS los actuadores declarados,
+        esten o no encendidos ahora mismo — "cuanto consumiria esta zona
+        SI se pusiera a calentar/enfriar ya". Hace falta para el banco de
+        confort (ver scheduler._opportunistic_preheat): mientras la zona
+        esta en idle decidiendo si merece la pena arrancar, `_zone_power_w`
+        siempre daria None (nada activo todavia). None si ningun actuador
+        declarado tiene ni sensor, ni potencia aprendida fiable, ni
+        estimada a mano — nunca se inventa un numero."""
+        total = 0.0
+        any_known = False
+        for entity_id in self._all_declared_actuators():
+            watts, _source = self._actuator_power_w(entity_id)
+            if watts is None:
+                continue
+            total += watts
+            any_known = True
+        return total if any_known else None
+
     def _preset_value(self, preset_name: str, side: str) -> float | None:
         """Consigna VIVA (calor o frio) de un preset — se busca en su
         entidad number.* propia (ver number.py), no en el texto estatico
@@ -976,6 +1014,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             self._reason = f"modo {action} fijado a mano desde el termostato"
         else:
             heat_target, cool_target = preset_heat, preset_cool
+            grid = grid_signal.read(self.hass)
             action, decide_reason = scheduler.decide_action(
                 current_temp=current_temp, heat_target=heat_target, cool_target=cool_target,
                 priority=self.zone.get(CONF_PRIORITY, "confort"), deadband=deadband,
@@ -984,6 +1023,8 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 heating_rate_deg_h=self._thermal_model.get("heating_rate_deg_h", 0.0),
                 cooling_rate_deg_h=self._thermal_model.get("cooling_rate_deg_h", 0.0),
                 idle_loss_coeff=self._thermal_model.get("idle_loss_coeff", 0.0),
+                grid_tier=grid["tier"], solar_surplus_now_w=grid["solar_surplus_now_w"],
+                zone_estimated_power_w=self._zone_estimated_power_w(),
             )
             self._reason = f"{preset_reason} — {decide_reason}"
             if action == "idle" and self._attr_hvac_mode == self._default_hvac_mode(self._last_full_capability):

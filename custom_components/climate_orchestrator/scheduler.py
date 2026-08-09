@@ -28,10 +28,18 @@ su motivo en texto plano.
   2. Reactivo: si la zona YA esta fuera de rango del preset activo, actua
      ya. El margen de esta comprobacion es la histéresis declarada en
      prioridad "confort", o un margen mas ancho en "ahorro" (ver
-     `_ahorro_extra_margin`, se estrecha solo si la previsión exterior
-     empeora en las proximas horas).
+     `_ahorro_extra_margin`, se estrecha si la previsión exterior empeora
+     en las proximas horas O si el precio/sol de la red no acompañan
+     ahora mismo — ver mas abajo, "señal de red").
 
-  3. Anticipatorio (aplica en "confort" Y "ahorro" por igual — no es una
+  3. Banco de confort (SOLO en "ahorro"): si hay excedente solar disponible
+     AHORA MISMO que cubre lo que esta zona necesitaria, y la zona todavia
+     tiene margen hasta el techo/suelo de seguridad, adelanta la
+     actuacion — usa la inercia termica del edificio como un deposito de
+     confort gratis antes de que llegue una hora cara (ver
+     `_opportunistic_preheat`).
+
+  4. Anticipatorio (aplica en "confort" Y "ahorro" por igual — no es una
      cuestion de ahorro, es evitar el golpe de "esperar y luego a tope"):
      si la zona esta DENTRO de rango ahora mismo pero, proyectando su
      deriva pasiva con la previsión exterior y la inercia termica
@@ -40,8 +48,16 @@ su motivo en texto plano.
      YA, de forma sostenida — en vez de esperar a que la zona ya se haya
      salido de rango y tener que compensarlo de golpe.
 
-  4. Prioridad "manual": nunca decide, deja el control a la anulacion
+  5. Prioridad "manual": nunca decide, deja el control a la anulacion
      manual o al preset fijado a mano.
+
+Señal de red (opcional, Battery Orchestrator): si ese addon esta
+instalado, publica una unica entidad con entity_id FIJO
+("sensor.battery_orchestrator_grid_signal") — se detecta sola, sin
+declarar nada en la configuracion de esta integracion. Sin ella (no
+instalado, o sin haber corrido su primer ciclo todavia), todos los
+parametros de red llegan a None/0 y el comportamiento es EXACTAMENTE el
+de antes de que existiera esta seccion: nada de lo de aqui es obligatorio.
 """
 
 from __future__ import annotations
@@ -79,6 +95,9 @@ def decide_action(
     heating_rate_deg_h: float,
     cooling_rate_deg_h: float,
     idle_loss_coeff: float,
+    grid_tier: str | None = None,
+    solar_surplus_now_w: float | None = None,
+    zone_estimated_power_w: float | None = None,
 ) -> tuple[str, str]:
     """Devuelve (accion, motivo). `accion` es "heat" | "cool" | "idle".
 
@@ -93,6 +112,12 @@ def decide_action(
     (indice 0), o lista vacia si no hay ninguna fuente declarada — ver
     outdoor.py. Sin previsión disponible, el motor sigue funcionando
     (reactivo puro, sin anticipacion ni ensanche de margen), nunca falla.
+
+    `grid_tier`/`solar_surplus_now_w`/`zone_estimated_power_w`: señal de
+    Battery Orchestrator, si esta instalado (ver modulo grid_signal.py) —
+    None si no hay addon, o si no ha reportado nunca. Solo se usan en
+    prioridad "ahorro"; sin ellos, "ahorro" se comporta exactamente igual
+    que antes de que existiera esta integracion (solo meteo exterior).
     """
     heating = heat_target is not None
     cooling = cool_target is not None
@@ -109,11 +134,13 @@ def decide_action(
     heat_note = cool_note = ""
     if priority == "ahorro":
         if heating:
-            extra, why = _ahorro_extra_margin(True, outdoor_now, outdoor_forecast, heating_rate_deg_h)
+            extra, why = _ahorro_extra_margin(True, outdoor_now, outdoor_forecast, heating_rate_deg_h,
+                                               grid_tier, solar_surplus_now_w, zone_estimated_power_w)
             heat_deadband = deadband + extra
             heat_note = f" ({why})"
         if cooling:
-            extra, why = _ahorro_extra_margin(False, outdoor_now, outdoor_forecast, cooling_rate_deg_h)
+            extra, why = _ahorro_extra_margin(False, outdoor_now, outdoor_forecast, cooling_rate_deg_h,
+                                               grid_tier, solar_surplus_now_w, zone_estimated_power_w)
             cool_deadband = deadband + extra
             cool_note = f" ({why})"
 
@@ -121,6 +148,20 @@ def decide_action(
         return "heat", f"calentando hacia {heat_target:.1f}°C{heat_note}"
     if cooling and current_temp > cool_target + cool_deadband:
         return "cool", f"enfriando hacia {cool_target:.1f}°C{cool_note}"
+
+    if priority == "ahorro":
+        if heating:
+            action, reason = _opportunistic_preheat(True, current_temp, heat_target, deadband,
+                                                      solar_surplus_now_w, zone_estimated_power_w,
+                                                      max_temp, min_temp)
+            if action != "idle":
+                return action, reason
+        if cooling:
+            action, reason = _opportunistic_preheat(False, current_temp, cool_target, deadband,
+                                                      solar_surplus_now_w, zone_estimated_power_w,
+                                                      max_temp, min_temp)
+            if action != "idle":
+                return action, reason
 
     if heating:
         action, reason = _anticipate(True, current_temp, heat_target, deadband, outdoor_forecast, idle_loss_coeff, heating_rate_deg_h)
@@ -139,10 +180,32 @@ def decide_action(
     return "idle", f"dentro de rango: {', '.join(parts) if parts else 'sin consigna activa'}"
 
 
+def _economic_factor(grid_tier: str | None, solar_surplus_now_w: float | None,
+                      zone_power_w: float | None) -> tuple[float, str]:
+    """Multiplicador (0..1) sobre el margen de "ahorro" segun el precio/sol
+    de la red AHORA MISMO — ver grid_signal.py. 1.0 = no recorta nada
+    (sin señal de Battery Orchestrator, o excedente solar de sobra para
+    cubrir la zona: tan barato como pueda ser, margen completo). Recorta
+    mas cuanto mas cara sea la hora sin sol que la cubra — igual filosofia
+    que el resto de factores de `_ahorro_extra_margin`: solo puede
+    RECORTAR el margen maximo, nunca ampliarlo por su cuenta."""
+    if grid_tier is None:
+        return 1.0, ""
+    if solar_surplus_now_w and zone_power_w and solar_surplus_now_w >= zone_power_w:
+        return 1.0, "excedente solar cubre la zona: margen completo"
+    if grid_tier == "valle":
+        return 0.8, "hora valle: margen amplio"
+    if grid_tier == "llano":
+        return 0.4, "hora llano: margen moderado"
+    return 0.0, "hora punta sin sol suficiente: margen mínimo"
+
+
 def _ahorro_extra_margin(heating: bool, outdoor_now: float | None, outdoor_forecast: list[float],
-                          rate_deg_h: float) -> tuple[float, str]:
+                          rate_deg_h: float, grid_tier: str | None = None,
+                          solar_surplus_now_w: float | None = None,
+                          zone_power_w: float | None = None) -> tuple[float, str]:
     """Cuantos °C de mas se le puede dar de margen a la histéresis en
-    prioridad "ahorro", y por que. Combina dos factores independientes,
+    prioridad "ahorro", y por que. Combina TRES factores independientes,
     cada uno limitando el margen por su cuenta (nunca lo amplian, solo lo
     recortan desde el maximo):
 
@@ -154,6 +217,8 @@ def _ahorro_extra_margin(heating: bool, outdoor_now: float | None, outdoor_forec
       - Velocidad real de la zona (inercia termica aprendida): una zona
         lenta no se puede permitir tanto margen como una rapida, porque
         tarda mas en recuperar terreno si hace falta.
+      - Precio/sol AHORA MISMO (ver `_economic_factor`) — señal opcional
+        de Battery Orchestrator, si esta instalado.
     """
     if outdoor_now is None or not outdoor_forecast:
         base_max = AHORRO_MAX_MARGIN_DEG * 0.5
@@ -166,10 +231,42 @@ def _ahorro_extra_margin(heating: bool, outdoor_now: float | None, outdoor_forec
         trend_note = "previsión exterior estable" if worsening < 0.5 else "la previsión exterior empeora, margen recortado"
 
     responsiveness = max(0.0, min(1.0, (rate_deg_h or 0.0) / REFERENCE_RATE_DEG_H))
-    extra = base_max * responsiveness
+    economic_mult, economic_note = _economic_factor(grid_tier, solar_surplus_now_w, zone_power_w)
+    extra = base_max * responsiveness * economic_mult
+
+    note = trend_note
     if responsiveness < 0.5:
-        return extra, f"{trend_note}, zona lenta ({rate_deg_h:.1f}°C/h)"
-    return extra, trend_note
+        note = f"{note}, zona lenta ({rate_deg_h:.1f}°C/h)"
+    if economic_note:
+        note = f"{note}, {economic_note}"
+    return extra, note
+
+
+def _opportunistic_preheat(heating: bool, current_temp: float, target_temp: float, deadband: float,
+                            solar_surplus_now_w: float | None, zone_power_w: float | None,
+                            max_temp: float, min_temp: float) -> tuple[str, str]:
+    """Banco de confort: si hay excedente solar AHORA MISMO que cubre lo
+    que esta zona necesitaria, adelanta la actuacion hasta `deadband`
+    extra sobre la consigna — usa la inercia termica del edificio como un
+    deposito de confort gratis antes de que llegue una hora cara, en vez
+    de esperar a necesitarlo de verdad y tener que pagarlo. Nunca cruza
+    `max_temp`/`min_temp` (ya comprobados antes que nada mas en
+    `decide_action`) ni pasa de un deadband extra — no "cuece" la zona,
+    solo adelanta lo que de todas formas iba a hacer falta.
+
+    Sin dato de excedente solar o de potencia estimada de la zona, no
+    hace nada — nunca inventa una oportunidad que no se puede confirmar."""
+    if not solar_surplus_now_w or not zone_power_w or solar_surplus_now_w < zone_power_w:
+        return "idle", ""
+    if heating:
+        boost_target = min(target_temp + deadband, max_temp)
+        if current_temp < boost_target:
+            return "heat", "excedente solar disponible ahora: pre-climatizando antes de la próxima hora cara"
+    else:
+        boost_target = max(target_temp - deadband, min_temp)
+        if current_temp > boost_target:
+            return "cool", "excedente solar disponible ahora: pre-climatizando antes de la próxima hora cara"
+    return "idle", ""
 
 
 def _anticipate(heating: bool, current_temp: float, target_temp: float, deadband: float,

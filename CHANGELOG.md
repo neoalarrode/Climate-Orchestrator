@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0
+
+- Nuevo: integración automática con **Battery Orchestrator** (si está instalado), sin ninguna configuración manual en ningún lado — se detecta por un `entity_id` fijo (`sensor.battery_orchestrator_grid_signal`), y esta zona se marca a sí misma para que Battery Orchestrator también la encuentre sola.
+  - **Prioridad "ahorro" con datos económicos reales**: hasta ahora "ahorro" solo ensanchaba el margen de confort según la previsión meteorológica exterior. Ahora también recorta ese margen según el tramo de tarifa y el excedente solar disponible AHORA MISMO (`_economic_factor`, `scheduler.py`) — margen mínimo en punta sin sol, margen completo si el excedente solar cubre la zona, sea cual sea la meteo.
+  - **Banco de confort térmico**: si hay excedente solar de sobra para la zona, adelanta hasta `deadband` de más la actuación aprovechando la inercia térmica del edificio como depósito de confort gratis antes de la próxima hora cara (`_opportunistic_preheat`) — nunca cruza los límites de seguridad `min_temp`/`max_temp`.
+  - Reacciona AL INSTANTE a cambios de la señal de Battery Orchestrator (mismo mecanismo `async_track_state_change_event` que ya usa para la meteo exterior), no espera al ciclo periódico.
+  - Sin Battery Orchestrator instalado, el comportamiento es exactamente el de antes — nada de esto es obligatorio.
+
 ## 0.9.0 (sin publicar — implementado, pendiente de revisión)
 
 - **Control proporcional TPI para switches**: en vez de un simple

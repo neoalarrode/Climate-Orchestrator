@@ -78,6 +78,22 @@ def parse_presets(text: str) -> list[dict]:
                 cool_temp = float(cool_str.strip())
             except ValueError as e:
                 raise ValueError(f"«{temps_str}» no es un par valido «calor/frio» para «{name}»") from e
+            # Con calor >= frio (p.ej. "25/21" en vez de "21/25", el orden
+            # invertido) la zona en Auto no tendria NINGUNA temperatura
+            # que la deje tranquila: por debajo de 25 "hace falta calor",
+            # por encima de 21 "hace falta frio" — las dos cosas a la vez,
+            # siempre, sin importar la temperatura real. En la practica
+            # eso es o bien calor y frio luchando entre si sin parar (el
+            # peor derroche posible, ver `_async_execute`/mutual
+            # exclusion), o un ciclado constante entre los dos — nunca un
+            # estado estable. Se corta aqui, en vez de dejar que la zona
+            # lo sufra en produccion.
+            if heat_temp >= cool_temp:
+                raise ValueError(
+                    f"«{name}»: la consigna de calor ({heat_temp}°C) tiene que ser menor que la de frío "
+                    f"({cool_temp}°C) — si no, Auto no encontraría nunca una temperatura que no pidiera las dos "
+                    "cosas a la vez"
+                )
         else:
             try:
                 heat_temp = cool_temp = float(temps_str)

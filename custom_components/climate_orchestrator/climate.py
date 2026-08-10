@@ -708,7 +708,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         except (TypeError, ValueError):
             return None
 
-    def _smart_idle_action(self) -> tuple[str, str | None]:
+    def _smart_idle_action(self, current_temp: float | None, heat_target: float | None, deadband: float) -> tuple[str, str | None]:
         """Reposo INTELIGENTE — sin interruptor propio: coexiste solo con
         el modo mas automatico que tenga la zona (Auto en una zona con
         calor y frio de verdad; el unico modo que le queda a una zona de
@@ -728,12 +728,35 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         ver CONF_DRY_HUMIDITY_THRESHOLD), no solo a comodidad. Ninguno de
         los dos persigue nunca una temperatura ni sustituye a calor/frio
         cuando de verdad hacen falta, y ninguno cambia el hvac_mode de
-        esta zona — solo la orden que recibe el delegado."""
+        esta zona — solo la orden que recibe el delegado.
+
+        OJO con "dry": en la inmensa mayoria de aires acondicionados
+        reales NO es un modo neutro para la temperatura — el compresor
+        sigue funcionando (a menos velocidad, con menos caudal de aire)
+        para poder condensar humedad, y eso enfria la zona como efecto
+        secundario. Si la zona esta cerca del limite INFERIOR de confort
+        (su consigna de calor, cuando la tiene), deshumidificar puede
+        empujarla por debajo de esa consigna y obligar a calentar justo
+        despues — se paga la energia de deshumidificar Y la de corregir
+        el sobreenfriamiento que acaba de causar, mas gasto que si
+        simplemente se hubiera apagado. Por eso solo se permite "dry"
+        cuando hay margen de sobra por encima de la consigna de calor (un
+        `deadband` entero, el mismo margen que usa el resto del motor
+        para "no merece la pena tocarlo todavia"); en una zona sin
+        consigna de calor (solo frio) no hay ese riesgo, se permite
+        siempre que la humedad lo pida."""
         if "dry" in self._last_full_capability:
             humidity = self._read_humidity_now()
             threshold = float(self.zone.get(CONF_DRY_HUMIDITY_THRESHOLD, DEFAULT_DRY_HUMIDITY_THRESHOLD))
+            heat_margin_ok = (
+                heat_target is None or current_temp is None or current_temp >= heat_target + deadband
+            )
             if humidity is not None and humidity >= threshold:
-                return "dry", f"humedad {humidity:.0f}% ≥ {threshold:.0f}%: deshumidificando en vez de apagar"
+                if heat_margin_ok:
+                    return "dry", f"humedad {humidity:.0f}% ≥ {threshold:.0f}%: deshumidificando en vez de apagar"
+                # Se queda sin deshumidificar (ni "dry" ni "idle" a secas
+                # bloquean fan_only mas abajo) para no arriesgarse a
+                # enfriar de mas cerca de la consigna de calor.
         if "fan_only" in self._last_full_capability:
             return "fan_only", "dentro de margen: ventilando en vez de apagar del todo"
         return "idle", None
@@ -1074,7 +1097,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 # calor" en una zona que tambien tiene frio, esta claro que
                 # quiere control manual, no que el motor decida nada mas
                 # por su cuenta.
-                smart_action, smart_reason = self._smart_idle_action()
+                smart_action, smart_reason = self._smart_idle_action(current_temp, heat_target, deadband)
                 if smart_reason:
                     action = smart_action
                     self._reason += f" — {smart_reason}"
@@ -1210,8 +1233,19 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             else:
                 desired_heat_on = False
                 self._tpi_cycle_start.pop("heat", None)  # sin demanda: el proximo ciclo empieza limpio, en fase "encendido"
+            # Si el frio esta activo DE VERDAD ahora mismo (Auto cambiando
+            # de lado), apagar el calor es tan urgente como el aviso de
+            # puerta/ventana — salta el anti-ciclado igual que el (ver
+            # `force_off`). Sin esto, un switch de calor que se acaba de
+            # encender hace menos de CONF_MIN_ON_SECONDS se queda
+            # "atascado" encendido por el anti-ciclado mientras el de frio
+            # arranca en paralelo: calentando y enfriando la misma zona a
+            # la vez, el peor derroche posible. Nunca fuerza el ENCENDIDO,
+            # solo el apagado del lado que ya no toca — el lado nuevo sigue
+            # respetando su propio anti-ciclado al arrancar.
+            heat_force = force_off or (not desired_heat_on and action == "cool")
             for sw in self.zone.get(CONF_HEAT_SWITCHES) or []:
-                if await self._drive_switch(sw, desired_heat_on, simulate, force=force_off):
+                if await self._drive_switch(sw, desired_heat_on, simulate, force=heat_force):
                     real_heat = True
 
         if capability in ("cool", "heat_cool"):
@@ -1220,8 +1254,11 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             else:
                 desired_cool_on = False
                 self._tpi_cycle_start.pop("cool", None)
+            # Mismo razonamiento que `heat_force` arriba, en sentido
+            # contrario (calor tomando el relevo del frio).
+            cool_force = force_off or (not desired_cool_on and action == "heat")
             for sw in self.zone.get(CONF_COOL_SWITCHES) or []:
-                if await self._drive_switch(sw, desired_cool_on, simulate, force=force_off):
+                if await self._drive_switch(sw, desired_cool_on, simulate, force=cool_force):
                     real_cool = True
 
         for entity_id in self.zone.get(CONF_CLIMATE_ENTITIES) or []:

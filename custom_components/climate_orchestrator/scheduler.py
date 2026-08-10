@@ -133,6 +133,21 @@ def decide_action(
     if priority == "manual":
         return "idle", "modo manual: sin gestión automática"
 
+    # Red de seguridad EN VIVO: `parse_presets` (presets.py) ya rechaza
+    # esto al declarar un preset, pero las consignas number.* son
+    # editables en caliente desde Lovelace o una automatizacion — si
+    # alguien deja la de calor igual o por encima de la de frio DESPUES
+    # de creada la zona, sin esto ninguna temperatura real dejaria a la
+    # zona tranquila: siempre "hace falta calor" o "hace falta frio" a la
+    # vez, el peor derroche posible (o luchando entre si, o ciclando sin
+    # parar). Mejor idle con el motivo claro que dejar que el motor
+    # persiga dos consignas imposibles.
+    if heating and cooling and heat_target >= cool_target:
+        return "idle", (
+            f"consignas inválidas: calor ({heat_target:.1f}°C) no es menor que frío ({cool_target:.1f}°C) — "
+            "revisa las entidades number.* del preset activo"
+        )
+
     heat_deadband = cool_deadband = deadband
     heat_note = cool_note = ""
     if priority == "ahorro":

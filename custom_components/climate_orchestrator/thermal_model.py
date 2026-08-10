@@ -220,7 +220,18 @@ def _compute_model_sync(hass: HomeAssistant, zone: dict, days: int) -> dict:
             runs_used += n
 
     outdoor_sensor = zone.get("outdoor_temp_sensor")
-    idle_runs = heat_runs or cool_runs
+    # Tramos "apagado" de AMBOS lados juntos (calor y frio) — la perdida
+    # pasiva de la zona no depende de cual de los dos la calento/enfrio
+    # por ultima vez, cualquier tramo con el actuador correspondiente
+    # apagado sirve igual. Iba con "or" (heat_runs or cool_runs): al ser
+    # listas, eso escogia SOLO heat_runs en cuanto tuviera aunque fuera un
+    # tramo (aunque cool_runs tuviera muchos mas y mejores), descartando
+    # de raiz la mitad de las muestras disponibles sin motivo -- menos
+    # datos para `idle_loss_coeff`, que alimenta directamente la
+    # anticipacion (`scheduler._anticipate`): una estimacion peor ahi
+    # dispara la anticipacion demasiado pronto o demasiado tarde, ninguna
+    # de las dos eficiente.
+    idle_runs = heat_runs + cool_runs
     if outdoor_sensor and idle_runs:
         outdoor_states = _history_for(hass, outdoor_sensor, start, end)
         coeff, n = _learn_idle_loss_coeff(temp_states, idle_runs, outdoor_states)

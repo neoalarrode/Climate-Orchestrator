@@ -143,6 +143,23 @@ from .const import (
 TEMP_EMA_HALFLIFE_SECONDS = 120
 STALE_SENSOR_HARD_TIMEOUT_SECONDS = 5400  # 90 min
 
+# `async_write_ha_state()` (ver `_maybe_write_ha_state`) escribe una fila
+# NUEVA en el recorder cada vez que se llama, con la mayoria de los
+# atributos de la entidad (no solo el estado) — y `current_temperature`
+# viene de una EMA con 2 decimales (ver TEMP_EMA_HALFLIFE_SECONDS) que
+# practicamente SIEMPRE cambia un poquito en cada lectura nueva del
+# sensor, asi que el filtro de "sin cambios" que HA aplica por defecto
+# antes de escribir casi nunca actua aqui. Sin limite, una zona con
+# varios sensores vigilados (temperatura, humedad, potencia de cada
+# actuador...) que reportan cada pocos segundos puede acabar escribiendo
+# al recorder varias veces por minuto, multiplicado por cada zona
+# declarada — carga de E/S de disco real e innecesaria en un dispositivo
+# limitado (visto en produccion, RPi5). Por eso se throttlea: como mucho
+# una escritura cada WRITE_MIN_INTERVAL_SECONDS por SOLO jitter numerico,
+# pero cualquier cambio que de verdad importe (accion, modo, motivo)
+# sigue escribiendo AL INSTANTE, sin esperar — ver `_maybe_write_ha_state`.
+WRITE_MIN_INTERVAL_SECONDS = 20
+
 # Deteccion de fallo del equipo (ver `_check_equipment_failure`): si
 # llevamos esto pidiendo calor/frio de verdad sin que la temperatura se
 # mueva lo minimo esperado, es sospechoso -- solo informa, nunca actua
@@ -244,6 +261,12 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._thermal_model: dict = {}
         self._reason = "sin calcular todavia"
         self._active_preset_name: str | None = None
+
+        # Throttle de `async_write_ha_state()` (ver `_maybe_write_ha_state`,
+        # llamado al final de `_async_decide_and_act`) — ver WRITE_MIN_
+        # INTERVAL_SECONDS mas abajo para el motivo.
+        self._last_state_write_ts = None
+        self._last_written_signature: tuple | None = None
 
         # Consignas del preset "Manual" (ver presets.py) — a diferencia de
         # los demas presets, no viven en una entidad number.*: se ponen
@@ -989,7 +1012,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             # detecte capacidad real por primera vez, ya sea por el evento
             # reactivo del propio actuador o por el refresco periodico.
             self._attr_available = False
-            self.async_write_ha_state()
+            self._maybe_write_ha_state()
             return
 
         current_temp = self._read_current_temp()
@@ -998,7 +1021,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._attr_current_humidity = round(humidity) if humidity is not None else None
         if current_temp is None:
             self._attr_available = False
-            self.async_write_ha_state()
+            self._maybe_write_ha_state()
             return
         self._attr_available = True
 
@@ -1164,7 +1187,29 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         humidify_active = self._attr_hvac_mode != HVACMode.OFF and not force_off
         await self._drive_humidifiers(humidify_active)
 
-        self.async_write_ha_state()
+        self._maybe_write_ha_state()
+
+    def _maybe_write_ha_state(self) -> None:
+        """Ver WRITE_MIN_INTERVAL_SECONDS arriba para el motivo: escribe
+        AL INSTANTE si algo que de verdad importa cambio desde la ultima
+        escritura (disponibilidad, accion real, modo, o el motivo en
+        texto — que ya cambia solo cuando cambia algo real, ver `_reason`
+        en todo `_async_decide_and_act`); si lo unico que se movio es el
+        jitter numerico de la EMA de temperatura (o similar), se retrasa
+        como mucho WRITE_MIN_INTERVAL_SECONDS. Nunca deja de escribir del
+        todo — solo agrupa las escrituras que no aportan nada nuevo que
+        alguien mirando el dashboard o una automatizacion fuera a notar."""
+        signature = (self._attr_available, self._attr_hvac_action, self._attr_hvac_mode, self._reason)
+        now = dt_util.utcnow()
+        significant_change = signature != self._last_written_signature
+        elapsed_enough = (
+            self._last_state_write_ts is None
+            or (now - self._last_state_write_ts).total_seconds() >= WRITE_MIN_INTERVAL_SECONDS
+        )
+        if significant_change or elapsed_enough:
+            self.async_write_ha_state()
+            self._last_state_write_ts = now
+            self._last_written_signature = signature
 
     def _update_target_attrs(self, heat_target: float | None, cool_target: float | None) -> None:
         if self._attr_hvac_mode == HVACMode.HEAT_COOL:

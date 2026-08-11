@@ -160,6 +160,31 @@ STALE_SENSOR_HARD_TIMEOUT_SECONDS = 5400  # 90 min
 # sigue escribiendo AL INSTANTE, sin esperar — ver `_maybe_write_ha_state`.
 WRITE_MIN_INTERVAL_SECONDS = 20
 
+# `_async_refresh_forecast` (disparado cada `forecast_refresh_minutes`,
+# 10 min por defecto) recalcula el modelo termico (`thermal_model.
+# async_get_model`) y el de potencia (`power_model.async_get_power_model`)
+# desde cero en CADA disparo — cada uno escanea hasta `history_days_for_
+# inertia` (14 dias por defecto) de historico del recorder, de VARIAS
+# entidades (sensor de temperatura, exterior, cada actuador...), y el
+# modelo de potencia ADEMAS escanea el historico de los actuadores de
+# TODAS las demas zonas Climate Orchestrator para descartar solapamiento
+# con una maquina exterior compartida (ver power_model.py). Confirmado en
+# produccion (RPi5): un patron de cuelgues intermitentes de HA Core con
+# exactamente este periodo (~10 min), que paraba en cuanto se
+# desactivaba la integracion.
+#
+# Las propiedades fisicas que aprenden estos modelos (inercia termica del
+# edificio, consumo tipico de un actuador) NO cambian de un ciclo a otro
+# — a diferencia de la previsión meteorologica (que SI conviene refrescar
+# cada `forecast_refresh_minutes`, eso sigue igual), volver a escanear
+# dias de historico cada 10 min una vez el modelo YA es fiable es puro
+# derroche. Por eso, una vez fiable (`_models_settled`), el recalculo se
+# espacia a como mucho una vez cada MODEL_RECOMPUTE_MIN_INTERVAL_SECONDS
+# — mientras el modelo TODAVIA no es fiable (zona recien creada, poco
+# historico) se sigue intentando en cada ciclo normal, para converger
+# rapido.
+MODEL_RECOMPUTE_MIN_INTERVAL_SECONDS = 21600  # 6 h
+
 # Deteccion de fallo del equipo (ver `_check_equipment_failure`): si
 # llevamos esto pidiendo calor/frio de verdad sin que la temperatura se
 # mueva lo minimo esperado, es sospechoso -- solo informa, nunca actua
@@ -267,6 +292,13 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         # INTERVAL_SECONDS mas abajo para el motivo.
         self._last_state_write_ts = None
         self._last_written_signature: tuple | None = None
+
+        # Throttle del RECALCULO de los modelos termico/de potencia (ver
+        # `_models_settled`/`_async_refresh_forecast`) — MODEL_RECOMPUTE_
+        # MIN_INTERVAL_SECONDS mas abajo para el motivo (confirmado en
+        # produccion: el patron de cuelgues intermitentes de HA Core tenia
+        # exactamente el periodo de `forecast_refresh_minutes`).
+        self._model_last_computed_ts = None
 
         # Consignas del preset "Manual" (ver presets.py) — a diferencia de
         # los demas presets, no viven en una entidad number.*: se ponen
@@ -965,16 +997,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             self.hass, self.zone, weather_entity, DEFAULT_OUTDOOR_HORIZON_HOURS
         )
         self._outdoor_now = self._outdoor_forecast[0] if self._outdoor_forecast else None
-        self._thermal_model = await thermal_model.async_get_model(
-            self.hass, self.zone, int(self.zone.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA))
-        )
 
-        # Consumo aprendido (ver power_model.py) — SOLO para los
-        # actuadores de CALOR/FRIO (nunca el humidificador, entidad
-        # secundaria — ver `_climate_actuators`) que no tengan ni sensor
-        # propio ni potencia estimada declarada (CONF_ACTUATOR_POWER): para
-        # esos ya no hace falta aprender nada, se usan tal cual.
-        #
         # Sensor general de consumo de la casa: el declarado a mano en
         # esta zona (CONF_HOME_POWER_SENSOR) tiene prioridad si existe;
         # sin el, se cae AUTOMATICAMENTE al que ya tiene declarado Battery
@@ -984,17 +1007,52 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         # (ni aqui ni Battery Orchestrator instalado), no se aprende nada
         # — nunca una estimacion inventada.
         home_power_sensor = self.zone.get(CONF_HOME_POWER_SENSOR, "") or grid_signal.read(self.hass).get("home_power_sensor") or ""
+        # Consumo aprendido (ver power_model.py) — SOLO para los
+        # actuadores de CALOR/FRIO (nunca el humidificador, entidad
+        # secundaria — ver `_climate_actuators`) que no tengan ni sensor
+        # propio ni potencia estimada declarada (CONF_ACTUATOR_POWER): para
+        # esos ya no hace falta aprender nada, se usan tal cual.
         actuator_power = self.zone.get(CONF_ACTUATOR_POWER) or {}
         entities_to_learn = [
             e for e in self._climate_actuators()
             if not actuator_power.get(e, {}).get("sensor") and not actuator_power.get(e, {}).get("estimated_w")
         ]
-        self._power_model = await power_model.async_get_power_model(
-            self.hass, entities_to_learn, self.entry.entry_id, home_power_sensor,
-            int(self.zone.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA)),
-        ) if home_power_sensor and entities_to_learn else {}
+
+        # Recalcular el modelo termico y el de potencia es CARO (escanean
+        # dias de historico del recorder, ver MODEL_RECOMPUTE_MIN_INTERVAL_
+        # SECONDS arriba para el porque) — a diferencia de la previsión
+        # exterior de arriba, que SI conviene refrescar cada ciclo. Una vez
+        # ya son fiables, espaciar el recalculo real a como mucho una vez
+        # cada MODEL_RECOMPUTE_MIN_INTERVAL_SECONDS; mientras no lo sean
+        # (zona nueva, historico insuficiente todavia) se sigue intentando
+        # en cada ciclo normal para converger lo antes posible.
+        now = dt_util.utcnow()
+        if not self._models_settled(entities_to_learn) or self._model_last_computed_ts is None or (
+            (now - self._model_last_computed_ts).total_seconds() >= MODEL_RECOMPUTE_MIN_INTERVAL_SECONDS
+        ):
+            self._thermal_model = await thermal_model.async_get_model(
+                self.hass, self.zone, int(self.zone.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA))
+            )
+            self._power_model = await power_model.async_get_power_model(
+                self.hass, entities_to_learn, self.entry.entry_id, home_power_sensor,
+                int(self.zone.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA)),
+            ) if home_power_sensor and entities_to_learn else {}
+            self._model_last_computed_ts = now
 
         await self._async_decide_and_act()
+
+    def _models_settled(self, entities_to_learn: list[str]) -> bool:
+        """True si tanto el modelo termico como el de potencia (para cada
+        entidad que de verdad haga falta aprender ahora mismo) ya son
+        fiables — no hace falta seguir escaneando dias de historico cada
+        `forecast_refresh_minutes` mientras no haya nada nuevo que
+        aprender. Si aparece una entidad nueva sin dato fiable todavia
+        (p.ej. se añadio un actuador sin sensor propio), esto vuelve a
+        dar False solo (su clave no estara en `self._power_model` con
+        "reliable": True), forzando un recalculo real."""
+        if not self._thermal_model.get("reliable"):
+            return False
+        return all(self._power_model.get(e, {}).get("reliable") for e in entities_to_learn)
 
     # ---------------------------------------------------- decision barata --
 

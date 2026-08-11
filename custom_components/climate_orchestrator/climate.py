@@ -715,7 +715,20 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
         self.async_on_remove(async_call_later(self.hass, stagger_seconds, _start_periodic_refresh))
 
-        await self._async_refresh_forecast()
+        # El PRIMER refresco (este de aqui) tambien hacia falta staggearlo,
+        # no solo el periodico de arriba: todas las zonas se dan de alta
+        # durante el mismo arranque de HA, asi que un `await` directo aqui
+        # significa que TODAS disparan su primer calculo completo (el mas
+        # caro — nada esta "reliable" todavia, ver `_models_settled`) casi
+        # en el mismo instante, justo la ventana de mas riesgo (arranque en
+        # frio, con la maquina todavia levantando el resto de integraciones).
+        # Confirmado en produccion: el episodio real ocurrio ~15 min despues
+        # de un reinicio, con el modelo termico recien convergido pero
+        # calculado por primera vez sin ningun reparto. Reparto corto (0-60s,
+        # no la ventana completa de `refresh_minutes`) para no perder
+        # capacidad de respuesta real al arrancar, solo evitar la rafaga.
+        startup_stagger_seconds = _zone_stagger_seconds(self.entry.entry_id, 1)
+        self.async_on_remove(async_call_later(self.hass, startup_stagger_seconds, self._handle_forecast_refresh))
 
     # -------------------------------------------------------- reactivo ----
 

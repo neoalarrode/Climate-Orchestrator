@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import statistics
+import time
 from datetime import datetime, timedelta
 
 from homeassistant.components.recorder import get_instance, history
@@ -53,6 +54,18 @@ MIN_RUN_MINUTES = 3            # la potencia cambia al instante, no hace falta u
 MIN_VALID_SAMPLES = 4          # transiciones LIMPIAS minimas antes de fiarse de la mediana
 SAMPLE_WINDOW_MINUTES = 2      # cuanto se promedia el sensor de potencia justo antes/despues de la transicion
 MIN_DELTA_W = 10               # saltos menores se descartan como ruido de medida, no un cambio real
+
+# `_active_intervals` escanea el historico de TODOS los actuadores de
+# TODAS las demas zonas — el mismo escaneo, repetido entero, cada vez que
+# CUALQUIER zona necesita aprender su potencia. Con varias zonas, aunque
+# cada una ya reparte CUANDO recalcula (ver climate.py `_zone_stagger_
+# seconds`), pueden seguir coincidiendo dentro de una franja de varios
+# minutos — y el resultado ("que tramos estuvo encendido cada actuador
+# ajeno en los ultimos N dias") no cambia de un minuto para otro. Se
+# cachea a nivel de proceso (compartido entre TODAS las zonas, no por
+# zona) para no repetir el mismo escaneo caro varias veces seguidas.
+_active_intervals_cache: dict[tuple, tuple[float, list]] = {}
+ACTIVE_INTERVALS_CACHE_SECONDS = 1800  # 30 min
 
 
 class _SyntheticState:
@@ -125,6 +138,24 @@ def _active_intervals(hass: HomeAssistant, entities: list[str], start: datetime,
             if state == "on":
                 intervals.append((run_start, run_end))
     return intervals
+
+
+def _cached_active_intervals(hass: HomeAssistant, entities: list[str], start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    """Version cacheada de `_active_intervals` (ver ACTIVE_INTERVALS_CACHE_
+    SECONDS arriba) — la clave es solo el conjunto de entidades (no start/
+    end, que cambian en cada llamada por segundos): dentro de la ventana de
+    cache, se asume que "hace cuanto que paso cada N dias" no varia lo
+    suficiente como para justificar repetir el escaneo."""
+    if not entities:
+        return []
+    key = tuple(sorted(entities))
+    now_ts = time.time()
+    cached = _active_intervals_cache.get(key)
+    if cached is not None and (now_ts - cached[0]) < ACTIVE_INTERVALS_CACHE_SECONDS:
+        return cached[1]
+    result = _active_intervals(hass, entities, start, end)
+    _active_intervals_cache[key] = (now_ts, result)
+    return result
 
 
 def _overlaps(intervals: list[tuple[datetime, datetime]], t0: datetime, t1: datetime) -> bool:
@@ -200,7 +231,7 @@ def _compute_power_model_sync(hass: HomeAssistant, entities: list[str], entry_id
     start = end - timedelta(days=days)
 
     other_entities = _other_zone_entities(hass, entry_id)
-    other_intervals = _active_intervals(hass, other_entities, start, end) if other_entities else []
+    other_intervals = _cached_active_intervals(hass, other_entities, start, end) if other_entities else []
     power_states = _history_for(hass, home_power_sensor, start, end)
 
     for entity_id in entities:

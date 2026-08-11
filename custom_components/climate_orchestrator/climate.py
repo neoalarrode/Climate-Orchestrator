@@ -186,6 +186,61 @@ WRITE_MIN_INTERVAL_SECONDS = 20
 # rapido.
 MODEL_RECOMPUTE_MIN_INTERVAL_SECONDS = 21600  # 6 h
 
+# `_drive_climate_actuator`/`_drive_climate_idle`/`_drive_humidifiers` se
+# llaman en CADA `_async_decide_and_act` (cada evento reactivo, potencialmente
+# varias veces por minuto) — antes mandaban `set_hvac_mode`/`set_temperature`/
+# `set_humidity` SIN comprobar si el delegado ya estaba puesto asi, repitiendo
+# la misma orden real al dispositivo (y a su nube/API, en equipos WiFi) una y
+# otra vez sin que nada hubiera cambiado. Ahora se compara contra lo que el
+# propio delegado YA reporta en su estado antes de mandar nada — para
+# `hvac_mode` la comparacion es exacta (`state.state`), para temperatura y
+# humedad (numeros con redondeo/paso propio de cada fabricante) se usa un
+# margen pequeño para no reenviar por una diferencia de decimas que no es
+# un cambio real.
+TEMP_SEND_TOLERANCE_DEG = 0.1
+HUMIDITY_SEND_TOLERANCE_PCT = 1
+
+
+def _safe_float(value) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+# Deteccion automatica de velocidad de ventilador (ver `_pick_fan_mode`,
+# `_available_fan_modes`, `async_set_fan_mode`): sin ninguna eleccion
+# manual del usuario, el motor decide sola por palabras clave sobre los
+# nombres REALES que cada delegado declara en sus propias `fan_modes` —
+# nunca una lista fija propia, cada fabricante nombra distinto. Urgente
+# (tramo de seguridad de scheduler.py) empuja hacia la mas potente
+# disponible; tranquilo (todo lo demas: reactivo normal, anticipacion,
+# banco de confort) hacia la mas silenciosa/eficiente. Si nada coincide,
+# se prueba "auto" antes de rendirse; si tampoco hay "auto", no se toca
+# nada — mejor no adivinar que mandar una velocidad al azar.
+FAN_MODE_URGENT_KEYWORDS = ("high", "max", "turbo", "strong", "fast", "boost")
+FAN_MODE_GENTLE_KEYWORDS = ("low", "quiet", "silent", "eco", "min", "sleep")
+
+
+def _pick_fan_mode(fan_modes: list[str], urgent: bool, manual: str | None) -> str | None:
+    if not fan_modes:
+        return None
+    if manual and manual in fan_modes:
+        # Eleccion a mano del usuario (ver async_set_fan_mode): manda
+        # siempre que este delegado la soporte, sin mirar la urgencia —
+        # es una eleccion consciente, no algo que el motor deba
+        # "corregir" por su cuenta.
+        return manual
+    keywords = FAN_MODE_URGENT_KEYWORDS if urgent else FAN_MODE_GENTLE_KEYWORDS
+    for mode in fan_modes:
+        if any(k in mode.lower() for k in keywords):
+            return mode
+    for mode in fan_modes:
+        if "auto" in mode.lower():
+            return mode
+    return None
+
+
 # Deteccion de fallo del equipo (ver `_check_equipment_failure`): si
 # llevamos esto pidiendo calor/frio de verdad sin que la temperatura se
 # mueva lo minimo esperado, es sospechoso -- solo informa, nunca actua
@@ -328,6 +383,16 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._manual_heat: float | None = None
         self._manual_cool: float | None = None
 
+        # Velocidad de ventilador elegida A MANO desde la propia tarjeta
+        # (ver async_set_fan_mode/_pick_fan_mode) — None = "auto" (el
+        # motor decide sola segun la urgencia de la decision), cualquier
+        # otro valor se manda tal cual a cada delegado QUE LA SOPORTE,
+        # sin mirar la urgencia. Persistente igual que el resto de ajustes
+        # manuales, restaurada tras un reinicio (ver async_added_to_hass).
+        self._manual_fan_mode: str | None = None
+        self._attr_fan_mode: str | None = None
+        self._attr_fan_modes: list[str] | None = None
+
         self._switch_last_change: dict[str, tuple[str, object]] = {}
 
         # TPI (ver scheduler.py `tpi_on_percent`/`_tpi_desired_on`):
@@ -401,6 +466,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             "thermal_model_reliable": self._thermal_model.get("reliable", False),
             "heating_rate_deg_h": round(self._thermal_model.get("heating_rate_deg_h", 0) or 0, 2),
             "cooling_rate_deg_h": round(self._thermal_model.get("cooling_rate_deg_h", 0) or 0, 2),
+            # Capacidad de RETENCION de la zona (cuanto se acerca a la
+            # temperatura exterior por hora, con todo apagado, por grado
+            # de diferencia — aprendido del historico real, ver
+            # thermal_model.py) — decide cuanto merece la pena banquear en
+            # el preheat/preenfriado oportunista (ver scheduler.py
+            # `_retention_factor`, `_opportunistic_preheat`/
+            # `_price_anticipation_preheat`). Se expone el numero crudo Y
+            # la etiqueta legible — nunca solo la etiqueta, para que se
+            # pueda comprobar el calculo.
+            "idle_loss_coeff": round(self._thermal_model.get("idle_loss_coeff", 0) or 0, 3),
+            "retention": scheduler.retention_label(self._thermal_model.get("idle_loss_coeff")) if self._thermal_model.get("reliable") else "sin datos todavía",
             "outdoor_now": self._outdoor_now,
             # Previsión exterior tal cual la usa el motor para anticipar
             # (ver scheduler.py, ANTICIPATE_LOOKAHEAD_HOURS) — hora a hora
@@ -559,8 +635,60 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             # que el comportamiento esta obsoleto y algunos puentes no
             # exponen el interruptor de encendido.
             features |= ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+
+        # Velocidad de ventilador (ver _available_fan_modes/_pick_fan_mode
+        # /async_set_fan_mode) — solo se ofrece si ALGUN climate.* delegado
+        # declara de verdad sus propias fan_modes; sin eso, ni se expone
+        # la feature ni el selector aparece en la tarjeta.
+        fan_modes = self._available_fan_modes()
+        if fan_modes:
+            features |= ClimateEntityFeature.FAN_MODE
+            self._attr_fan_modes = fan_modes
+            self._attr_fan_mode = self._manual_fan_mode if self._manual_fan_mode in fan_modes else "auto"
+        else:
+            self._attr_fan_modes = None
+            self._attr_fan_mode = None
+
         self._attr_supported_features = features
         return capability
+
+    def _available_fan_modes(self) -> list[str]:
+        """Union de las velocidades de ventilador REALES que ofrece cada
+        climate.* delegado declarado (su propio atributo "fan_modes", en
+        vivo — nunca inventadas ni declaradas por el usuario) + "auto"
+        siempre en primer lugar (el motor decide sola, ver
+        `_pick_fan_mode`). "auto" va primero porque es el comportamiento
+        por defecto — quien no quiera tocar nada no tiene que buscarlo en
+        medio de una lista. Devuelve [] (sin exponer el selector en
+        absoluto) si ningun delegado soporta velocidades — no tiene
+        sentido ofrecer un selector con la unica opcion "auto"."""
+        ordered = ["auto"]
+        seen = {"auto"}
+        for entity_id in self.zone.get(CONF_CLIMATE_ENTITIES) or []:
+            state = self.hass.states.get(entity_id)
+            if state is None:
+                continue
+            for m in state.attributes.get("fan_modes") or []:
+                if m not in seen:
+                    ordered.append(m)
+                    seen.add(m)
+        return ordered if len(ordered) > 1 else []
+
+    async def async_set_fan_mode(self, fan_mode: str) -> None:
+        """Selector de velocidad de la propia tarjeta — "Auto" (el motor
+        decide sola segun la urgencia de cada decision, ver
+        `_pick_fan_mode`) o cualquier velocidad REAL que algun delegado
+        declare (ver `_available_fan_modes`). Persistente, igual que el
+        resto de ajustes manuales de esta zona (temperatura, preset) — se
+        queda fijada hasta que la cambies tu mismo, restaurada tras un
+        reinicio (ver async_added_to_hass). Un delegado que no soporte la
+        velocidad elegida simplemente se queda con su propia velocidad
+        actual (ver `_pick_fan_mode`) — nunca un error, solo esa entidad
+        en concreto no tiene esa opcion."""
+        self._manual_fan_mode = None if fan_mode == "auto" else fan_mode
+        self._attr_fan_mode = fan_mode
+        self.async_write_ha_state()
+        await self._async_decide_and_act()
 
     def _reconcile_hvac_mode(self, capability: set[str]) -> None:
         """Corrige la carrera de arranque: si al CREAR la entidad ningun
@@ -650,6 +778,15 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                             self._manual_cool = single_f
                     except (TypeError, ValueError):
                         pass
+
+            restored_fan_mode = last_state.attributes.get("fan_mode")
+            if restored_fan_mode and restored_fan_mode != "auto":
+                # Se restaura el STRING tal cual, aunque el delegado que
+                # la ofrecia todavia no este disponible en este instante
+                # (arranque en curso) — si al final no la soporta ninguno,
+                # `_pick_fan_mode` simplemente no encuentra coincidencia y
+                # no se manda nada, nunca un error.
+                self._manual_fan_mode = restored_fan_mode
 
             target_humidity = last_state.attributes.get(ATTR_HUMIDITY)
             if target_humidity is not None:
@@ -1173,6 +1310,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
         real_door_open = self._real_door_window_open()
 
+        # Urgencia de la decision — SOLO para elegir la velocidad de
+        # ventilador en los delegados que la soporten (ver `_pick_fan_mode`
+        # mas abajo), nunca cambia nada mas: "urgente" es el tramo de
+        # seguridad de `scheduler.decide_action` (por debajo/encima de
+        # min_temp/max_temp), donde interesa la maxima potencia de
+        # ventilador para recuperar cuanto antes; el resto (reactivo
+        # normal, anticipacion, banco de confort por sol/precio) es
+        # "tranquilo" — no hay prisa real, tiene sentido una velocidad
+        # baja/silenciosa o "auto" si el equipo la ofrece.
+        urgent = False
+
         force_off = False
         if self._attr_hvac_mode == HVACMode.OFF:
             action = "idle"
@@ -1222,6 +1370,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 grid_forecast=grid["forecast"],
             )
             self._reason = f"{preset_reason} — {decide_reason}"
+            urgent = "de seguridad de la zona" in decide_reason
             if action == "idle" and self._attr_hvac_mode == self._default_hvac_mode(self._last_full_capability):
                 # Ya esta dentro de margen: en vez de apagar sin mas, ver
                 # si el reposo inteligente tiene algo mejor que hacer con
@@ -1282,6 +1431,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         real_action = await self._async_execute(
             action, target_for_actuator, capability, current_temp, deadband, climate_idle_keep, force_off=force_off,
             heat_on_percent=heat_on_percent, cool_on_percent=cool_on_percent, tpi_cycle_minutes=tpi_cycle_minutes,
+            urgent=urgent,
         )
         # HVACAction.OFF (apagado de verdad, el modo elegido es "apagado")
         # es DISTINTO de HVACAction.IDLE (encendida, dentro de margen, sin
@@ -1339,6 +1489,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self, action: str, target_temp: float | None, capability: str, current_temp: float | None,
         deadband: float, climate_idle_keep: bool, force_off: bool = False,
         heat_on_percent: float | None = None, cool_on_percent: float | None = None, tpi_cycle_minutes: float = DEFAULT_TPI_CYCLE_MINUTES,
+        urgent: bool = False,
     ) -> str:
         """Ejecuta la decision sobre TODOS los actuadores declarados —
         tantos como se quiera de cada tipo (ver const.py). `action` ya
@@ -1374,6 +1525,13 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         `hvac_modes` (consultados en vivo, ver `_drive_climate_actuator`)
         — recibe una unica orden con el modo que toque cada vez; el que no
         lo soporte se ignora sin mas.
+
+        `urgent`: solo afecta a la VELOCIDAD DE VENTILADOR de los climate.*
+        delegados que la soporten (ver `_pick_fan_mode`) — True en el tramo
+        de seguridad de scheduler.py (por debajo/encima de min_temp/
+        max_temp), False en cualquier otro caso (reactivo normal,
+        anticipacion, banco de confort). Nunca cambia switches ni el
+        hvac_mode en si.
 
         Devuelve la accion REAL resultante — en modo switch puede no
         coincidir con `action` si el anti-ciclado todavia no deja cambiar
@@ -1422,7 +1580,7 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             if climate_idle_keep:
                 result = await self._drive_climate_idle(entity_id, current_temp, deadband, simulate)
             else:
-                result = await self._drive_climate_actuator(entity_id, action, target_temp, current_temp, simulate)
+                result = await self._drive_climate_actuator(entity_id, action, target_temp, current_temp, simulate, urgent)
             if result == "heat":
                 real_heat = True
             elif result == "cool":
@@ -1439,7 +1597,8 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         return "idle"
 
     async def _drive_climate_actuator(
-        self, entity_id: str, action: str, target_temp: float, current_temp: float | None, simulate: bool
+        self, entity_id: str, action: str, target_temp: float, current_temp: float | None, simulate: bool,
+        urgent: bool = False,
     ) -> str:
         """Consulta los `hvac_modes` NATIVOS de este climate.* delegado
         (nunca una declaracion nuestra) para saber si puede hacer lo que
@@ -1469,12 +1628,27 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
                 self._delegate_last_active[entity_id] = (action, target_temp)
                 self._delegate_overshoot_strikes[entity_id] = 0
             if not simulate:
-                await self.hass.services.async_call(
-                    "climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": action}, blocking=False)
+                # No mandar el modo si el delegado YA esta en ese modo —
+                # se compara contra su propio `state.state` (el hvac_mode
+                # vivo), nunca una cache nuestra: asi tambien se entera si
+                # alguien lo cambio por fuera (app del fabricante, mando
+                # fisico) y no repite una orden que no hace falta.
+                if state is None or state.state != action:
+                    await self.hass.services.async_call(
+                        "climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": action}, blocking=False)
                 if action in ("heat", "cool"):
                     compensated = self._compensate_delegate_target(entity_id, state, target_temp, current_temp)
-                    await self.hass.services.async_call(
-                        "climate", "set_temperature", {"entity_id": entity_id, "temperature": compensated}, blocking=False)
+                    # Mismo criterio para la temperatura: solo se manda si
+                    # de verdad difiere de la que el propio delegado ya
+                    # tiene puesta (ver TEMP_SEND_TOLERANCE_DEG) — sin
+                    # esto, `set_temperature` se repetia en CADA ciclo
+                    # aunque nada hubiera cambiado, confirmado como
+                    # trafico real e innecesario hacia el dispositivo.
+                    current_target = _safe_float(state.attributes.get("temperature")) if state else None
+                    if current_target is None or abs(current_target - compensated) > TEMP_SEND_TOLERANCE_DEG:
+                        await self.hass.services.async_call(
+                            "climate", "set_temperature", {"entity_id": entity_id, "temperature": compensated}, blocking=False)
+                    await self._drive_delegate_fan_mode(entity_id, state, urgent)
             elif action in ("heat", "cool"):
                 # En simulacion no se manda nada real, pero se calcula y
                 # guarda igual la desviacion — asi el atributo de
@@ -1486,6 +1660,23 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         if not simulate and "off" in supported and state is not None and state.state != "off":
             await self.hass.services.async_call("climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": "off"}, blocking=False)
         return "idle"
+
+    async def _drive_delegate_fan_mode(self, entity_id: str, state, urgent: bool) -> None:
+        """Manda `set_fan_mode` a ESTE delegado si de verdad hace falta
+        cambiarlo — ver `_pick_fan_mode` (elección a mano en
+        `self._manual_fan_mode` o automática por urgencia) y
+        FAN_MODE_URGENT_KEYWORDS/FAN_MODE_GENTLE_KEYWORDS. Nunca se llama
+        para un delegado sin `fan_modes` propias (la lista sale vacía y
+        `_pick_fan_mode` devuelve None sin más). No repite la orden si el
+        delegado ya está en la velocidad elegida — mismo criterio que el
+        resto de `_drive_climate_actuator`."""
+        if state is None:
+            return
+        fan_modes = list(state.attributes.get("fan_modes") or [])
+        desired_fan = _pick_fan_mode(fan_modes, urgent, self._manual_fan_mode)
+        if desired_fan and desired_fan != state.attributes.get("fan_mode"):
+            await self.hass.services.async_call(
+                "climate", "set_fan_mode", {"entity_id": entity_id, "fan_mode": desired_fan}, blocking=False)
 
     async def _drive_climate_idle(self, entity_id: str, current_temp: float | None, deadband: float, simulate: bool) -> str:
         """Que hacer con ESTE climate.* delegado en concreto al llegar a
@@ -1530,8 +1721,17 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             if state is None or state.state != last_mode:
                 await self.hass.services.async_call(
                     "climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": last_mode}, blocking=False)
-            await self.hass.services.async_call(
-                "climate", "set_temperature", {"entity_id": entity_id, "temperature": compensated}, blocking=False)
+            # Mismo criterio que en `_drive_climate_actuator` (ver
+            # TEMP_SEND_TOLERANCE_DEG): no repetir `set_temperature` si el
+            # delegado ya tiene puesta, en la practica, la misma consigna.
+            current_target = _safe_float(state.attributes.get("temperature")) if state else None
+            if current_target is None or abs(current_target - compensated) > TEMP_SEND_TOLERANCE_DEG:
+                await self.hass.services.async_call(
+                    "climate", "set_temperature", {"entity_id": entity_id, "temperature": compensated}, blocking=False)
+            # En reposo mantenido nunca hay prisa (ya esta satisfecha, ver
+            # docstring) — urgent=False siempre aqui, pero SI respeta una
+            # velocidad elegida a mano (`self._manual_fan_mode`).
+            await self._drive_delegate_fan_mode(entity_id, state, urgent=False)
         else:
             self._compensate_delegate_target(entity_id, state, last_target, current_temp)
         return "idle"
@@ -1683,8 +1883,14 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             if active:
                 if state is None or state.state != "on":
                     await self.hass.services.async_call("humidifier", "turn_on", {"entity_id": entity_id}, blocking=False)
-                await self.hass.services.async_call(
-                    "humidifier", "set_humidity", {"entity_id": entity_id, "humidity": self._attr_target_humidity}, blocking=False)
+                # Mismo criterio que en climate.* (ver TEMP_SEND_TOLERANCE_
+                # DEG/HUMIDITY_SEND_TOLERANCE_PCT arriba): no repetir
+                # `set_humidity` si el humidificador ya tiene puesta esa
+                # consigna.
+                current_humidity = _safe_float(state.attributes.get("humidity")) if state else None
+                if current_humidity is None or abs(current_humidity - self._attr_target_humidity) >= HUMIDITY_SEND_TOLERANCE_PCT:
+                    await self.hass.services.async_call(
+                        "humidifier", "set_humidity", {"entity_id": entity_id, "humidity": self._attr_target_humidity}, blocking=False)
             elif state is not None and state.state != "off":
                 await self.hass.services.async_call("humidifier", "turn_off", {"entity_id": entity_id}, blocking=False)
 

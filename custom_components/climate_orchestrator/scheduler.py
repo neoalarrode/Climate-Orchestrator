@@ -69,6 +69,46 @@ ANTICIPATE_LOOKAHEAD_HOURS = 3    # cuantas horas de previsión exterior se mira
 REFERENCE_RATE_DEG_H = 1.0        # tasa de referencia (°C/h) a partir de la cual una zona se considera "rapida" y se le da margen completo
 PRICE_ANTICIPATE_LOOKAHEAD_HOURS = 4  # cuantas horas del pronostico de red (Battery Orchestrator) se miran para anticipar una hora punta
 
+# `idle_loss_coeff` (thermal_model.py, aprendido del historico real) es
+# la CAPACIDAD DE RETENCION de la zona: cuantos grados por hora se acerca
+# a la temperatura exterior con todo apagado, por cada grado de
+# diferencia — 0.0 = retiene perfectamente (no aprendido, o aislamiento
+# excelente), hasta MAX_IDLE_LOSS_COEFF (el mismo tope que usa
+# thermal_model.py para descartar medidas invalidas) = pierde rapido. Ya
+# se usaba para decidir CUANDO empezar a anticipar (`_anticipate`); ahora
+# tambien decide CUANTO merece la pena banquear en el preheat/preenfriado
+# oportunista (`_opportunistic_preheat`/`_price_anticipation_preheat`):
+# una zona que retiene bien aprovecha un margen extra completo (el calor/
+# frio banqueado dura hasta la hora cara); una que pierde rapido no
+# compensa tanto banquear — ese margen se escaparia solo antes de que
+# haga falta.
+MAX_IDLE_LOSS_COEFF = 0.6
+
+
+def _retention_factor(idle_loss_coeff: float | None) -> float:
+    """1.0 (retencion perfecta conocida, o sin dato todavia — mismo
+    comportamiento que antes de existir esto, no penaliza a una zona
+    recien creada) hasta 0.0 (perdida maxima observable, MAX_IDLE_LOSS_
+    COEFF). Multiplica el margen extra de preheat/preenfriado — ver
+    llamadas en `_opportunistic_preheat`/`_price_anticipation_preheat`."""
+    if idle_loss_coeff is None:
+        return 1.0
+    return max(0.0, min(1.0, 1 - idle_loss_coeff / MAX_IDLE_LOSS_COEFF))
+
+
+def retention_label(idle_loss_coeff: float | None) -> str:
+    """Etiqueta legible de la capacidad de retencion, para mostrar en el
+    dashboard (ver climate.py extra_state_attributes) — nunca una caja
+    negra, el numero crudo (`idle_loss_coeff`) tambien se expone al lado."""
+    if idle_loss_coeff is None:
+        return "sin datos todavía"
+    factor = _retention_factor(idle_loss_coeff)
+    if factor >= 0.75:
+        return "buena"
+    if factor >= 0.4:
+        return "media"
+    return "baja"
+
 # TPI (Time Proportional Integral) — inspirado en versatile_thermostat:
 # en vez de un simple on/off, un switch recibe un porcentaje de tiempo
 # encendido DENTRO de cada ciclo (ver `tpi_on_percent` y
@@ -171,23 +211,23 @@ def decide_action(
         if heating:
             action, reason = _opportunistic_preheat(True, current_temp, heat_target, deadband,
                                                       solar_surplus_now_w, zone_estimated_power_w,
-                                                      max_temp, min_temp)
+                                                      max_temp, min_temp, idle_loss_coeff)
             if action != "idle":
                 return action, reason
             action, reason = _price_anticipation_preheat(True, current_temp, heat_target, deadband,
                                                            grid_tier, grid_forecast, zone_estimated_power_w,
-                                                           max_temp, min_temp)
+                                                           max_temp, min_temp, idle_loss_coeff)
             if action != "idle":
                 return action, reason
         if cooling:
             action, reason = _opportunistic_preheat(False, current_temp, cool_target, deadband,
                                                       solar_surplus_now_w, zone_estimated_power_w,
-                                                      max_temp, min_temp)
+                                                      max_temp, min_temp, idle_loss_coeff)
             if action != "idle":
                 return action, reason
             action, reason = _price_anticipation_preheat(False, current_temp, cool_target, deadband,
                                                            grid_tier, grid_forecast, zone_estimated_power_w,
-                                                           max_temp, min_temp)
+                                                           max_temp, min_temp, idle_loss_coeff)
             if action != "idle":
                 return action, reason
 
@@ -272,34 +312,44 @@ def _ahorro_extra_margin(heating: bool, outdoor_now: float | None, outdoor_forec
 
 def _opportunistic_preheat(heating: bool, current_temp: float, target_temp: float, deadband: float,
                             solar_surplus_now_w: float | None, zone_power_w: float | None,
-                            max_temp: float, min_temp: float) -> tuple[str, str]:
+                            max_temp: float, min_temp: float, idle_loss_coeff: float | None = None) -> tuple[str, str]:
     """Banco de confort: si hay excedente solar AHORA MISMO que cubre lo
     que esta zona necesitaria, adelanta la actuacion hasta `deadband`
     extra sobre la consigna — usa la inercia termica del edificio como un
     deposito de confort gratis antes de que llegue una hora cara, en vez
     de esperar a necesitarlo de verdad y tener que pagarlo. Nunca cruza
     `max_temp`/`min_temp` (ya comprobados antes que nada mas en
-    `decide_action`) ni pasa de un deadband extra — no "cuece" la zona,
-    solo adelanta lo que de todas formas iba a hacer falta.
+    `decide_action`).
+
+    El margen extra REAL se escala por `_retention_factor(idle_loss_coeff)`
+    — una zona que retiene bien el calor/frio (aislamiento real, aprendido
+    del historico, ver thermal_model.py) aprovecha el deadband completo,
+    porque lo banqueado dura; una que pierde rapido banquea menos, porque
+    ese margen se escaparia solo antes de que haga falta de verdad. Sin
+    dato de retencion todavia (zona nueva), se comporta igual que antes
+    (deadband completo).
 
     Sin dato de excedente solar o de potencia estimada de la zona, no
     hace nada — nunca inventa una oportunidad que no se puede confirmar."""
     if not solar_surplus_now_w or not zone_power_w or solar_surplus_now_w < zone_power_w:
         return "idle", ""
+    boost = deadband * _retention_factor(idle_loss_coeff)
+    retention_note = f", retención {retention_label(idle_loss_coeff)}" if idle_loss_coeff else ""
     if heating:
-        boost_target = min(target_temp + deadband, max_temp)
+        boost_target = min(target_temp + boost, max_temp)
         if current_temp < boost_target:
-            return "heat", "excedente solar disponible ahora: pre-climatizando antes de la próxima hora cara"
+            return "heat", f"excedente solar disponible ahora: pre-climatizando antes de la próxima hora cara{retention_note}"
     else:
-        boost_target = max(target_temp - deadband, min_temp)
+        boost_target = max(target_temp - boost, min_temp)
         if current_temp > boost_target:
-            return "cool", "excedente solar disponible ahora: pre-climatizando antes de la próxima hora cara"
+            return "cool", f"excedente solar disponible ahora: pre-climatizando antes de la próxima hora cara{retention_note}"
     return "idle", ""
 
 
 def _price_anticipation_preheat(heating: bool, current_temp: float, target_temp: float, deadband: float,
                                  grid_tier: str | None, grid_forecast: list[dict] | None,
-                                 zone_power_w: float | None, max_temp: float, min_temp: float) -> tuple[str, str]:
+                                 zone_power_w: float | None, max_temp: float, min_temp: float,
+                                 idle_loss_coeff: float | None = None) -> tuple[str, str]:
     """Banco de confort por PRECIO: a diferencia de `_opportunistic_preheat`
     (que solo mira el excedente solar AHORA MISMO), esta mira el
     PRONOSTICO que Battery Orchestrator ya calcula para si mismo (ver
@@ -314,10 +364,11 @@ def _price_anticipation_preheat(heating: bool, current_temp: float, target_temp:
     disparar (seria "precalentar" en plena hora cara) — ese caso ya lo
     cubre el margen recortado de `_economic_factor` en la rama reactiva.
 
-    Nunca cruza max_temp/min_temp ni pasa de un deadband extra. Sin
-    pronostico (Battery Orchestrator no instalado, sin datos todavia, o
-    zona sin potencia estimada/aprendida), no hace nada — nunca inventa
-    una hora punta que no esta confirmada en el pronostico."""
+    Mismo escalado por retencion que `_opportunistic_preheat` (ver ahi) —
+    nunca cruza max_temp/min_temp. Sin pronostico (Battery Orchestrator
+    no instalado, sin datos todavia, o zona sin potencia estimada/
+    aprendida), no hace nada — nunca inventa una hora punta que no esta
+    confirmada en el pronostico."""
     if not grid_forecast or not zone_power_w or grid_tier == "punta":
         return "idle", ""
     upcoming_expensive = any(
@@ -326,14 +377,16 @@ def _price_anticipation_preheat(heating: bool, current_temp: float, target_temp:
     )
     if not upcoming_expensive:
         return "idle", ""
+    boost = deadband * _retention_factor(idle_loss_coeff)
+    retention_note = f", retención {retention_label(idle_loss_coeff)}" if idle_loss_coeff else ""
     if heating:
-        boost_target = min(target_temp + deadband, max_temp)
+        boost_target = min(target_temp + boost, max_temp)
         if current_temp < boost_target:
-            return "heat", "hora punta próxima sin sol suficiente: pre-climatizando ahora que es más barato"
+            return "heat", f"hora punta próxima sin sol suficiente: pre-climatizando ahora que es más barato{retention_note}"
     else:
-        boost_target = max(target_temp - deadband, min_temp)
+        boost_target = max(target_temp - boost, min_temp)
         if current_temp > boost_target:
-            return "cool", "hora punta próxima sin sol suficiente: pre-climatizando ahora que es más barato"
+            return "cool", f"hora punta próxima sin sol suficiente: pre-climatizando ahora que es más barato{retention_note}"
     return "idle", ""
 
 

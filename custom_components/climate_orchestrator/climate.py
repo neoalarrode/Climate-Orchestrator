@@ -320,6 +320,15 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
 
         self._attr_hvac_modes = [HVACMode.OFF]  # se recalcula de verdad justo abajo y en cada refresco
         self._last_full_capability: set[str] = set()  # ver _refresh_hvac_modes / _smart_idle_action
+
+        # Tiene que estar inicializado ANTES de la primera llamada a
+        # `_refresh_hvac_modes()` de aqui abajo — esa ya lee
+        # `self._manual_fan_mode` (ver `_available_fan_modes`). Sin esto,
+        # AttributeError en cada arranque: confirmado en producción.
+        self._manual_fan_mode: str | None = None
+        self._attr_fan_mode: str | None = None
+        self._attr_fan_modes: list[str] | None = None
+
         capability = self._refresh_hvac_modes()
         # Si en ESTE instante (construccion de la entidad) no se detecta
         # ningun actuador, lo mas probable es que sea una carrera de
@@ -383,15 +392,9 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         self._manual_heat: float | None = None
         self._manual_cool: float | None = None
 
-        # Velocidad de ventilador elegida A MANO desde la propia tarjeta
-        # (ver async_set_fan_mode/_pick_fan_mode) — None = "auto" (el
-        # motor decide sola segun la urgencia de la decision), cualquier
-        # otro valor se manda tal cual a cada delegado QUE LA SOPORTE,
-        # sin mirar la urgencia. Persistente igual que el resto de ajustes
-        # manuales, restaurada tras un reinicio (ver async_added_to_hass).
-        self._manual_fan_mode: str | None = None
-        self._attr_fan_mode: str | None = None
-        self._attr_fan_modes: list[str] | None = None
+        # (self._manual_fan_mode / _attr_fan_mode / _attr_fan_modes ya se
+        # inicializaron arriba del todo, ANTES de la primera llamada a
+        # _refresh_hvac_modes() — ver el comentario ahi.)
 
         self._switch_last_change: dict[str, tuple[str, object]] = {}
 

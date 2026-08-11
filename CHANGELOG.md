@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.10.11
+**Hotfix urgente** de la v0.10.10: `self._manual_fan_mode` (nuevo en esa versión, ver velocidad de ventilador) se inicializaba DESPUÉS del punto de `__init__` donde ya se llama a `_refresh_hvac_modes()` (que lo lee, vía `_available_fan_modes`) — `AttributeError` en cada arranque, dejando las dos zonas en "no disponible". Confirmado en producción nada más instalar. Corregido moviendo la inicialización antes de esa primera llamada.
+
 ## 0.10.10
 Optimización de cómo se ejecutan las órdenes sobre los actuadores reales, más dos capacidades nuevas.
 

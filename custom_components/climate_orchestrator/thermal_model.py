@@ -32,6 +32,7 @@ climate.* delegados a la vez, cualquier combinacion):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import statistics
 from datetime import datetime, timedelta
@@ -50,6 +51,33 @@ _LOGGER = logging.getLogger(__name__)
 
 MIN_RUN_MINUTES = 20
 MIN_VALID_RUNS = 3
+
+# LIMITE DURO, no negociable: cuantos puntos como MAXIMO se procesan de
+# UNA entidad en UNA sola consulta de historico, pase lo que pase. Sin
+# esto, un sensor muy parlanchin (reporta cada pocos segundos) sobre una
+# ventana de varios dias puede traer decenas o cientos de miles de
+# objetos State a la vez dentro de un unico hilo del executor — memoria
+# real, de golpe, sea cual sea la potencia de la maquina (confirmado en
+# produccion: el mismo patron de cuelgues intermitentes de HA Core
+# persistia igual tras migrar de una RPi5 a un i7 de 8 nucleos). Los
+# demas throttles de este modulo (recalculo espaciado, reparto por zona,
+# cache compartida — ver climate.py) reducen CUANTO A MENUDO se hace este
+# trabajo; este limite acota CUANTO PESA como maximo cada vez que se
+# hace, sin excepcion, independientemente de cuantas zonas haya o cuanto
+# reporte un sensor. Si se supera, se toma un submuestreo UNIFORME (no
+# solo los puntos mas recientes, para no sesgar la estadistica hacia una
+# parte concreta del dia) — los tramos que se calculan a partir de esto
+# (ver `_state_runs`) siguen siendo estadisticamente validos con menos
+# puntos, solo pierden algo de resolucion temporal en tramos muy cortos.
+MAX_STATES_PER_ENTITY = 5000
+
+
+def _cap_states(states: list) -> list:
+    if len(states) <= MAX_STATES_PER_ENTITY:
+        return states
+    step = len(states) / MAX_STATES_PER_ENTITY
+    return [states[int(i * step)] for i in range(MAX_STATES_PER_ENTITY)]
+
 
 _Run = tuple[datetime, datetime, str]
 
@@ -141,9 +169,11 @@ def _learn_idle_loss_coeff(temp_states: list, runs: list[_Run], outdoor_states: 
 
 def _history_for(hass: HomeAssistant, entity_id: str, start: datetime, end: datetime) -> list:
     """Historico de una entidad simple (switch, sensor): una entrada por
-    cambio de SU `state`, sin atributos (mas barato)."""
+    cambio de SU `state`, sin atributos (mas barato). Acotado con
+    `_cap_states` (ver MAX_STATES_PER_ENTITY arriba) — limite duro, no
+    solo para sensores parlanchines conocidos."""
     result = history.state_changes_during_period(hass, start, end, entity_id, no_attributes=True)
-    return result.get(entity_id, [])
+    return _cap_states(result.get(entity_id, []))
 
 
 def _climate_actuator_states(hass: HomeAssistant, entity_id: str, wanted_action: str,
@@ -154,11 +184,14 @@ def _climate_actuator_states(hass: HomeAssistant, entity_id: str, wanted_action:
     `wanted_action` ("heating" o "cooling"), "off" el resto del tiempo.
     Hace falta el historico CON atributos (mas caro que `_history_for`,
     por eso es una funcion aparte) porque `hvac_action` es un atributo,
-    no el `state` de la entidad (que es el hvac_mode: heat/cool/off/...)."""
+    no el `state` de la entidad (que es el hvac_mode: heat/cool/off/...).
+    Acotado con `_cap_states` ANTES de traducir — con atributos completos
+    por punto, esta es la consulta mas cara de las dos, el limite duro
+    importa mas aqui todavia."""
     result = history.get_significant_states(
         hass, start, end, [entity_id], significant_changes_only=False, minimal_response=False, no_attributes=False,
     )
-    raw = result.get(entity_id, [])
+    raw = _cap_states(result.get(entity_id, []))
     synthetic = []
     for s in raw:
         action = (s.attributes or {}).get("hvac_action")
@@ -244,17 +277,46 @@ def _compute_model_sync(hass: HomeAssistant, zone: dict, days: int) -> dict:
     return model
 
 
-async def async_get_model(hass: HomeAssistant, zone: dict, days: int) -> dict:
+MODEL_COMPUTE_TIMEOUT_SECONDS = 60  # limite duro de espera — ver mas abajo
+
+
+async def async_get_model(hass: HomeAssistant, zone: dict, days: int, fallback: dict | None = None) -> dict:
     """Consulta el recorder en su propio hilo (nunca en el loop de eventos
-    de HA — una consulta de historico de varios dias puede tardar)."""
+    de HA — una consulta de historico de varios dias puede tardar).
+
+    `asyncio.wait_for` con MODEL_COMPUTE_TIMEOUT_SECONDS: si por lo que
+    sea (recorder bajo mucha carga, disco lento, lo que sea) esto tarda
+    mas de lo razonable, esta zona deja de ESPERAR en vez de quedarse
+    colgada indefinidamente. El hilo del executor sigue corriendo por
+    detras hasta que termine solo (Python no puede matar un hilo a la
+    fuerza), pero ya no bloquea a nadie que dependa de este resultado —
+    protege la RESPUESTA, no el trabajo de fondo en si (para eso esta
+    MAX_STATES_PER_ENTITY, que acota cuanto hay que procesar de entrada).
+
+    `fallback`: que devolver si falla o se agota el tiempo — por defecto
+    (sin declarar) los valores de fabrica sin fiabilidad, pero climate.py
+    pasa aqui su `self._thermal_model` ACTUAL: un timeout puntual no debe
+    tirar a la basura un modelo que YA era fiable de una vez anterior,
+    solo significa "esta vez no ha dado tiempo a refrescarlo", no "hay
+    que olvidar lo aprendido hasta ahora"."""
+    default_fallback = {
+        "heating_rate_deg_h": DEFAULT_HEATING_RATE_DEG_H,
+        "cooling_rate_deg_h": DEFAULT_COOLING_RATE_DEG_H,
+        "idle_loss_coeff": DEFAULT_IDLE_LOSS_COEFF,
+        "reliable": False,
+        "runs_used": 0,
+    }
+    fallback = fallback if fallback is not None else default_fallback
     try:
-        return await get_instance(hass).async_add_executor_job(_compute_model_sync, hass, zone, days)
+        return await asyncio.wait_for(
+            get_instance(hass).async_add_executor_job(_compute_model_sync, hass, zone, days),
+            timeout=MODEL_COMPUTE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        _LOGGER.warning(
+            "Calculo de inercia termica de %s superó %ss, se sigue con el ultimo modelo conocido",
+            zone.get("name"), MODEL_COMPUTE_TIMEOUT_SECONDS,
+        )
     except Exception:  # el recorder puede no estar listo, o la entidad no tener historico todavia
         _LOGGER.debug("No se pudo calcular la inercia termica de %s todavia", zone.get("name"), exc_info=True)
-        return {
-            "heating_rate_deg_h": DEFAULT_HEATING_RATE_DEG_H,
-            "cooling_rate_deg_h": DEFAULT_COOLING_RATE_DEG_H,
-            "idle_loss_coeff": DEFAULT_IDLE_LOSS_COEFF,
-            "reliable": False,
-            "runs_used": 0,
-        }
+    return fallback

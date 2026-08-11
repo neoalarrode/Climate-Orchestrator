@@ -173,7 +173,7 @@ DEFAULT_MIN_TEMP = 15.0
 DEFAULT_MAX_TEMP = 30.0
 DEFAULT_MIN_ON_SECONDS = 300
 DEFAULT_MIN_OFF_SECONDS = 300
-DEFAULT_HISTORY_DAYS_FOR_INERTIA = 14
+DEFAULT_HISTORY_DAYS_FOR_INERTIA = 5  # antes 14: cada dia de mas es historico REAL que HA tiene que traer entero a memoria en una sola consulta antes de poder procesarlo (ver MAX_STATES_PER_ENTITY en thermal_model.py/power_model.py) — con MIN_VALID_RUNS=3 tramos de MIN_RUN_MINUTES=20 cada uno, 5 dias basta de sobra para una zona con uso normal; configurable si hace falta mas
 DEFAULT_FORECAST_REFRESH_MINUTES = 10
 DEFAULT_OUTDOOR_HORIZON_HOURS = 6  # ya no hace falta un horizonte largo (sin horario que anticipar): solo AHORRO_LOOKAHEAD_HOURS de scheduler.py + margen
 

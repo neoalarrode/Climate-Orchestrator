@@ -1083,11 +1083,13 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             (now - self._model_last_computed_ts).total_seconds() >= MODEL_RECOMPUTE_MIN_INTERVAL_SECONDS
         ):
             self._thermal_model = await thermal_model.async_get_model(
-                self.hass, self.zone, int(self.zone.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA))
+                self.hass, self.zone, int(self.zone.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA)),
+                fallback=self._thermal_model,
             )
             self._power_model = await power_model.async_get_power_model(
                 self.hass, entities_to_learn, self.entry.entry_id, home_power_sensor,
                 int(self.zone.get(CONF_HISTORY_DAYS_FOR_INERTIA, DEFAULT_HISTORY_DAYS_FOR_INERTIA)),
+                fallback=self._power_model,
             ) if home_power_sensor and entities_to_learn else {}
             self._model_last_computed_ts = now
 

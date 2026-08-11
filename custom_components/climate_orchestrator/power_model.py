@@ -37,6 +37,7 @@ verdad.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import statistics
 import time
@@ -76,9 +77,24 @@ class _SyntheticState:
         self.last_changed = last_changed
 
 
+# LIMITE DURO, no negociable — mismo motivo y mismo valor que en
+# thermal_model.py (ver ahi para el razonamiento completo): esta funcion
+# TAMBIEN se usa para leer el sensor general de potencia de la casa
+# (home_power_sensor), que suele ser de los sensores mas parlanchines de
+# toda la instalacion.
+MAX_STATES_PER_ENTITY = 5000
+
+
+def _cap_states(states: list) -> list:
+    if len(states) <= MAX_STATES_PER_ENTITY:
+        return states
+    step = len(states) / MAX_STATES_PER_ENTITY
+    return [states[int(i * step)] for i in range(MAX_STATES_PER_ENTITY)]
+
+
 def _history_for(hass: HomeAssistant, entity_id: str, start: datetime, end: datetime) -> list:
     result = history.state_changes_during_period(hass, start, end, entity_id, no_attributes=True)
-    return result.get(entity_id, [])
+    return _cap_states(result.get(entity_id, []))
 
 
 def _state_runs(states: list) -> list[tuple[datetime, datetime, str]]:
@@ -98,7 +114,7 @@ def _climate_on_off_runs(hass: HomeAssistant, entity_id: str, start: datetime, e
     result = history.get_significant_states(
         hass, start, end, [entity_id], significant_changes_only=False, minimal_response=False, no_attributes=False,
     )
-    raw = result.get(entity_id, [])
+    raw = _cap_states(result.get(entity_id, []))
     synthetic = [
         _SyntheticState("on" if (s.attributes or {}).get("hvac_action") in ("heating", "cooling") else "off", s.last_changed)
         for s in raw
@@ -239,17 +255,41 @@ def _compute_power_model_sync(hass: HomeAssistant, entities: list[str], entry_id
     return result
 
 
-async def async_get_power_model(hass: HomeAssistant, entities: list[str], entry_id: str, home_power_sensor: str, days: int) -> dict:
+POWER_MODEL_COMPUTE_TIMEOUT_SECONDS = 60  # limite duro de espera, mismo motivo que thermal_model.py
+
+
+async def async_get_power_model(
+    hass: HomeAssistant, entities: list[str], entry_id: str, home_power_sensor: str, days: int,
+    fallback: dict | None = None,
+) -> dict:
     """Consulta el recorder en su propio hilo (nunca en el loop de eventos
     de HA). Devuelve {entity_id: {"learned_power_w", "reliable",
     "samples_used", "samples_discarded_other_zone"}} — solo para las
-    entidades pedidas (las que de verdad necesitan aprenderse)."""
+    entidades pedidas (las que de verdad necesitan aprenderse).
+
+    `asyncio.wait_for` con POWER_MODEL_COMPUTE_TIMEOUT_SECONDS: mismo
+    motivo que en thermal_model.py — un calculo que tarda demasiado deja
+    de bloquear a esta zona, aunque el hilo del executor siga corriendo
+    por detras hasta terminar solo.
+
+    `fallback`: que devolver si falla o se agota el tiempo — climate.py
+    pasa aqui su `self._power_model` ACTUAL para no perder un aprendizaje
+    ya fiable por un timeout puntual (ver mismo razonamiento en
+    thermal_model.async_get_model)."""
     if not entities or not home_power_sensor:
         return {}
     try:
-        return await get_instance(hass).async_add_executor_job(
-            _compute_power_model_sync, hass, entities, entry_id, home_power_sensor, days
+        return await asyncio.wait_for(
+            get_instance(hass).async_add_executor_job(
+                _compute_power_model_sync, hass, entities, entry_id, home_power_sensor, days
+            ),
+            timeout=POWER_MODEL_COMPUTE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        _LOGGER.warning(
+            "Aprendizaje de potencia de %s actuadores superó %ss, se sigue con lo ya aprendido",
+            len(entities), POWER_MODEL_COMPUTE_TIMEOUT_SECONDS,
         )
     except Exception:  # el recorder puede no estar listo, o sin historico todavia
         _LOGGER.debug("No se pudo aprender la potencia de %s actuadores todavia", len(entities), exc_info=True)
-        return {}
+    return fallback if fallback is not None else {}

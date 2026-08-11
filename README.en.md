@@ -114,3 +114,10 @@ Full field-by-field setup guide in [DOCS.en.md](DOCS.en.md).
 Actively developed — see [CHANGELOG.md](CHANGELOG.md). Turn on simulation
 mode on every new zone and review its `reason` attribute for a few days
 before letting it act for real.
+
+## License
+
+© 2026 Eric Larrode. All rights reserved — see [LICENSE](LICENSE).
+The code is visible so it can be installed via HACS, but its use,
+copying, or modification outside this repository is not authorized
+without explicit permission.

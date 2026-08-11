@@ -117,3 +117,10 @@ Guía de configuración completa, campo a campo, en [DOCS.md](DOCS.md).
 En desarrollo activo — ver [CHANGELOG.md](CHANGELOG.md). Activa el modo
 simulación en cada zona nueva y revisa unos días el atributo `reason`
 antes de dejarla actuar de verdad.
+
+## Licencia
+
+© 2026 Eric Larrode. Todos los derechos reservados — ver [LICENSE](LICENSE).
+El código es visible para poder instalarlo vía HACS, pero no está
+autorizado su uso, copia ni modificación fuera de este repositorio sin
+permiso expreso.

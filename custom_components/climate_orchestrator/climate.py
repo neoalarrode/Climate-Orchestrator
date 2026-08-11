@@ -68,6 +68,7 @@ delegados."""
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import timedelta
 
@@ -79,7 +80,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util, slugify
 
@@ -198,6 +199,25 @@ _ACTION_MAP = {
     "heat": HVACAction.HEATING, "cool": HVACAction.COOLING, "idle": HVACAction.IDLE,
     "dry": HVACAction.DRYING, "fan_only": HVACAction.FAN,
 }
+
+
+def _zone_stagger_seconds(entry_id: str, refresh_minutes: int) -> float:
+    """Desfase ESTABLE (el mismo entry_id da siempre el mismo desfase,
+    tambien tras un reinicio de HA — a proposito NO es aleatorio, para no
+    generar un patron distinto cada vez que reinicia) derivado del propio
+    entry_id de la zona, repartido uniformemente dentro de la ventana de
+    `refresh_minutes`. Con esto, si hay varias zonas, sus recalculos
+    periodicos (ver `_async_refresh_forecast`) quedan repartidos en el
+    tiempo en vez de caer todos en el mismo instante — el motivo real, no
+    solo cosmetico: SQLite (el recorder de HA por defecto) solo permite
+    una escritura a la vez, y una lectura larga (nuestro escaneo de dias
+    de historico) puede bloquear esa escritura mientras dura. Varias
+    zonas escaneando A LA VEZ se serializan entre si Y con las escrituras
+    normales del recorder, sea cual sea la potencia de la maquina — mas
+    nucleos no paralelizan un unico fichero SQLite."""
+    digest = hashlib.sha1(entry_id.encode()).hexdigest()
+    fraction = int(digest[:8], 16) / 0xFFFFFFFF  # 0.0 .. 1.0, estable
+    return fraction * refresh_minutes * 60
 
 # "Modos extra" que un climate.* delegado puede declarar ademas de calor/
 # frio (dry = deshumidificar, fan_only = solo ventilador). Dos usos BIEN
@@ -672,9 +692,28 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             self.async_on_remove(async_track_state_change_event(self.hass, watched, self._handle_reactive_event))
 
         refresh_minutes = self.zone.get(CONF_FORECAST_REFRESH_MINUTES, DEFAULT_FORECAST_REFRESH_MINUTES)
-        self.async_on_remove(
-            async_track_time_interval(self.hass, self._handle_forecast_refresh, timedelta(minutes=refresh_minutes))
-        )
+
+        # Desfase ESTABLE por zona (mismo entry_id -> mismo desfase, tambien
+        # tras un reinicio) antes de arrancar el temporizador periodico -
+        # ver `_zone_stagger_seconds` para el motivo: sin esto, TODAS las
+        # zonas se dan de alta casi a la vez al arrancar HA, y
+        # `async_track_time_interval` no tiene jitter propio, asi que sus
+        # recalculos (ya throttleados, ver MODEL_RECOMPUTE_MIN_INTERVAL_
+        # SECONDS) siguen cayendo TODOS en el mismo instante para siempre.
+        # Confirmado en produccion: el mismo patron de cuelgues intermitentes
+        # persistia tras migrar de una RPi5 a un i7 de 8 nucleos - no era
+        # falta de CPU, era contencion de bloqueos en el recorder SQLite
+        # (que solo permite una escritura a la vez) por varias zonas
+        # escaneando dias de historico A LA VEZ, algo que mas nucleos no
+        # arreglan.
+        stagger_seconds = _zone_stagger_seconds(self.entry.entry_id, refresh_minutes)
+
+        def _start_periodic_refresh(_now) -> None:
+            self.async_on_remove(
+                async_track_time_interval(self.hass, self._handle_forecast_refresh, timedelta(minutes=refresh_minutes))
+            )
+
+        self.async_on_remove(async_call_later(self.hass, stagger_seconds, _start_periodic_refresh))
 
         await self._async_refresh_forecast()
 

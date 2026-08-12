@@ -120,7 +120,7 @@ antes de dejarla actuar de verdad.
 
 ## Licencia
 
-© 2026 Eric Larrode. Todos los derechos reservados — ver [LICENSE](LICENSE).
+© 2026 Eric Larrodé. Todos los derechos reservados — ver [LICENSE](LICENSE).
 El código es visible para poder instalarlo vía HACS, pero no está
 autorizado su uso, copia ni modificación fuera de este repositorio sin
 permiso expreso.

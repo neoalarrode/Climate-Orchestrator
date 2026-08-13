@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.10.14
+**Bug real, distinto del de la v0.10.13**: elegir el preset "Manual" desde su propio selector (no arrastrando el dial) dejaba la zona sin ninguna consigna que mostrar ni ajustar. Causa: `async_set_preset_mode` se limitaba a cambiar el preset y recalcular, sin sembrar `_manual_heat`/`_manual_cool` — si nunca se habían tocado a mano antes, seguían a `None`, así que el reposo se quedaba sin consigna que enseñar (y sin consigna no hay dial que arrastrar para ponerla: círculo vicioso). `async_set_temperature` (arrastrar el dial) ya sembraba esos valores correctamente desde el preset saliente al entrar en Manual — se aplica el mismo criterio aquí.
+
 ## 0.10.13
 Fix: con la zona en modo Auto (Calor/Frío), cuando el reposo inteligente decidía ventilar/deshumidificar de fondo en vez de apagar del todo (`_smart_idle_action`), se informaba `hvac_action = "fan"`/`"drying"` — técnicamente cierto, pero la tarjeta de termostato ESTÁNDAR de HA oculta el selector de las dos consignas (calor/frío) en cuanto `hvac_action` no es calor/frío/idle, dejando sin poder tocarlas mientras durara ese reposo. Las consignas seguían calculándose bien por debajo, solo no se podían ver ni editar desde la tarjeta.
 

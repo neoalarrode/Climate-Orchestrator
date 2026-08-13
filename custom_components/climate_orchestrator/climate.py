@@ -2013,5 +2013,19 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         restaura tras un reinicio, igual que el modo hvac."""
         if preset_mode not in (self._attr_preset_modes or []):
             return
+        if preset_mode == presets_module.PRESET_MANUAL and self._attr_preset_mode != presets_module.PRESET_MANUAL:
+            # Semilla las consignas manuales con lo que estuviera activo
+            # justo antes (el preset saliente) — mismo criterio que ya usa
+            # `async_set_temperature` al entrar en Manual arrastrando el
+            # dial. Sin esto, `_manual_heat`/`_manual_cool` se quedan a
+            # `None` si nunca se habian tocado a mano, la zona se queda sin
+            # NINGUNA consigna que mostrar, y sin consigna no hay dial que
+            # arrastrar para poner una — bug real, confirmado: elegir
+            # "Manual" desde el propio selector de preset (no desde el
+            # dial) dejaba los controles ocultos sin salida.
+            self._manual_heat = self._attr_target_temperature_low if self._attr_hvac_mode == HVACMode.HEAT_COOL \
+                else (self._attr_target_temperature if self._attr_hvac_mode == HVACMode.HEAT else None)
+            self._manual_cool = self._attr_target_temperature_high if self._attr_hvac_mode == HVACMode.HEAT_COOL \
+                else (self._attr_target_temperature if self._attr_hvac_mode == HVACMode.COOL else None)
         self._attr_preset_mode = preset_mode
         await self._async_decide_and_act()

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.12
+**Bug real, confirmado en producción**: tras reiniciar HA Core, si algún actuador `climate.*` delegado cargaba después que la zona (o reportaba sus `hvac_modes` completos en un segundo evento tras el primero), las opciones del termostato se quedaban bloqueadas con la capacidad parcial detectada en el PRIMER evento — exigía recargar la zona a mano para arreglarse, en vez de resolverse sola en segundos como estaba pensado.
+
+Causa: `_handle_reactive_event` solo recalculaba `_attr_hvac_modes` mientras `_capability_pending` seguía activo — en cuanto se detectaba CUALQUIER capacidad (aunque fuera parcial), esa bandera se limpiaba para siempre y el evento reactivo dejaba de recalcular nada en los eventos siguientes. Solo el refresco periódico (`forecast_refresh_minutes`, 10 min por defecto) lo curaba solo — demasiado lento para notarlo al momento. Corregido: `_refresh_hvac_modes()` se recalcula en CADA evento reactivo, no solo mientras la capacidad esté pendiente por primera vez; `_reconcile_hvac_mode` ya se encargaba de que la propuesta de modo por defecto solo pase una vez, así que es seguro.
+
 ## 0.10.11
 **Hotfix urgente** de la v0.10.10: `self._manual_fan_mode` (nuevo en esa versión, ver velocidad de ventilador) se inicializaba DESPUÉS del punto de `__init__` donde ya se llama a `_refresh_hvac_modes()` (que lo lee, vía `_available_fan_modes`) — `AttributeError` en cada arranque, dejando las dos zonas en "no disponible". Confirmado en producción nada más instalar. Corregido moviendo la inicialización antes de esa primera llamada.
 

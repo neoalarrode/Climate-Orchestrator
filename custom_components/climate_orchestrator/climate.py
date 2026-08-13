@@ -875,27 +875,13 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
     async def _handle_reactive_event(self, event) -> None:
         # Tambien se escuchan los climate.* delegados (ver `watched` arriba)
         # justamente para esto: en cuanto uno de ellos aparece/actualiza su
-        # estado, reevaluar la capacidad AL INSTANTE en vez de esperar al
-        # proximo refresco periodico (hasta `forecast_refresh_minutes`, 10
-        # min por defecto) — asi la carrera de arranque se resuelve en
-        # segundos, no en minutos.
-        #
-        # SIEMPRE se recalcula, no solo mientras `_capability_pending` -- si
-        # se dejaba condicionado a eso (como antes), en cuanto se detectaba
-        # CUALQUIER capacidad (aunque fuera parcial: un delegado que reporta
-        # sus hvac_modes completos en un SEGUNDO evento tras el primero, o
-        # una zona con varios actuadores donde unos cargan antes que otros)
-        # `_capability_pending` se limpiaba para siempre y este handler
-        # dejaba de recalcular `_attr_hvac_modes` en los eventos
-        # siguientes -- la zona se quedaba pillada con la capacidad parcial
-        # del primer evento hasta el proximo refresco periodico (bug real,
-        # confirmado en produccion: exigia recargar la zona a mano tras un
-        # reinicio de HA Core para que las opciones del termostato dejaran
-        # de estar bloqueadas). `_reconcile_hvac_mode` ya se encarga de que
-        # la propuesta de modo por defecto solo pase una vez, asi que es
-        # seguro llamarla en cada evento.
-        capability = self._refresh_hvac_modes()
-        self._reconcile_hvac_mode(capability)
+        # estado por primera vez, reevaluar la capacidad AL INSTANTE en vez
+        # de esperar al proximo refresco periodico (hasta
+        # `forecast_refresh_minutes`, 10 min por defecto) — asi la carrera
+        # de arranque se resuelve en segundos, no en minutos.
+        if self._capability_pending:
+            capability = self._refresh_hvac_modes()
+            self._reconcile_hvac_mode(capability)
         await self._async_decide_and_act()
 
     async def _handle_forecast_refresh(self, now) -> None:

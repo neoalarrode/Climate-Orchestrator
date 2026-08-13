@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.10.16
+Completa la reversión de 0.10.15: también deshecha 0.10.12 (`_handle_reactive_event` recalculando `hvac_modes` en cada evento reactivo, no solo al detectar capacidad por primera vez) — tocaba el mismo tipo de atributo (`hvac_modes`, expuesto directamente a HomeKit vía el puente Matter) que causó el problema de reconocimiento reportado. La carrera de arranque que arreglaba (zona bloqueada con capacidad parcial hasta recargarla a mano) vuelve a estar presente; sigue siendo un problema real, pero pendiente de una solución que no toque estos atributos de la forma que le confunde a Matter.
+
 ## 0.10.15
 **Revierte 0.10.12 y 0.10.13**, confirmado en producción: HomeKit sobre Matter dejó de reconocer bien los modos y las consignas de las zonas tras esos dos cambios. Ambos tocaban `hvac_action`/`hvac_modes` — atributos que el puente Matter de HA expone directamente a HomeKit — y el efecto real en un puente Matter/HomeKit de verdad pesa más que el problema que intentaban arreglar (una tarjeta de Lovelace ocultando el selector de consignas durante el reposo inteligente, y una carrera de arranque poco frecuente). Se mantiene 0.10.14 (sembrar consignas al elegir preset Manual), sin relación con `hvac_action`/`hvac_modes` y sin ningún efecto conocido sobre Matter/HomeKit.
 

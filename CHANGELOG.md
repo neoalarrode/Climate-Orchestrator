@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.13
+Fix: con la zona en modo Auto (Calor/Frío), cuando el reposo inteligente decidía ventilar/deshumidificar de fondo en vez de apagar del todo (`_smart_idle_action`), se informaba `hvac_action = "fan"`/`"drying"` — técnicamente cierto, pero la tarjeta de termostato ESTÁNDAR de HA oculta el selector de las dos consignas (calor/frío) en cuanto `hvac_action` no es calor/frío/idle, dejando sin poder tocarlas mientras durara ese reposo. Las consignas seguían calculándose bien por debajo, solo no se podían ver ni editar desde la tarjeta.
+
+Corregido: esa acción de reposo (`"fan_only"`/`"dry"`) solo se informa como tal cuando el modo que el usuario ELIGIÓ es literalmente Solo Ventilador/Deshumidificar; si el modo elegido es uno de temperatura real (Auto/calor/frío) y es el reposo inteligente el que decide ventilar de fondo, se informa `HVACAction.IDLE` en su lugar — no se pierde información real, el ventilador en marcha lo sigue diciendo `fan_mode` por separado.
+
 ## 0.10.12
 **Bug real, confirmado en producción**: tras reiniciar HA Core, si algún actuador `climate.*` delegado cargaba después que la zona (o reportaba sus `hvac_modes` completos en un segundo evento tras el primero), las opciones del termostato se quedaban bloqueadas con la capacidad parcial detectada en el PRIMER evento — exigía recargar la zona a mano para arreglarse, en vez de resolverse sola en segundos como estaba pensado.
 

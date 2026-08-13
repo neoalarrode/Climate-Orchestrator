@@ -1,14 +1,17 @@
 # Changelog
 
+## 0.10.15
+**Revierte 0.10.12 y 0.10.13**, confirmado en producción: HomeKit sobre Matter dejó de reconocer bien los modos y las consignas de las zonas tras esos dos cambios. Ambos tocaban `hvac_action`/`hvac_modes` — atributos que el puente Matter de HA expone directamente a HomeKit — y el efecto real en un puente Matter/HomeKit de verdad pesa más que el problema que intentaban arreglar (una tarjeta de Lovelace ocultando el selector de consignas durante el reposo inteligente, y una carrera de arranque poco frecuente). Se mantiene 0.10.14 (sembrar consignas al elegir preset Manual), sin relación con `hvac_action`/`hvac_modes` y sin ningún efecto conocido sobre Matter/HomeKit.
+
 ## 0.10.14
 **Bug real, distinto del de la v0.10.13**: elegir el preset "Manual" desde su propio selector (no arrastrando el dial) dejaba la zona sin ninguna consigna que mostrar ni ajustar. Causa: `async_set_preset_mode` se limitaba a cambiar el preset y recalcular, sin sembrar `_manual_heat`/`_manual_cool` — si nunca se habían tocado a mano antes, seguían a `None`, así que el reposo se quedaba sin consigna que enseñar (y sin consigna no hay dial que arrastrar para ponerla: círculo vicioso). `async_set_temperature` (arrastrar el dial) ya sembraba esos valores correctamente desde el preset saliente al entrar en Manual — se aplica el mismo criterio aquí.
 
-## 0.10.13
+## 0.10.13 (revertida en 0.10.15)
 Fix: con la zona en modo Auto (Calor/Frío), cuando el reposo inteligente decidía ventilar/deshumidificar de fondo en vez de apagar del todo (`_smart_idle_action`), se informaba `hvac_action = "fan"`/`"drying"` — técnicamente cierto, pero la tarjeta de termostato ESTÁNDAR de HA oculta el selector de las dos consignas (calor/frío) en cuanto `hvac_action` no es calor/frío/idle, dejando sin poder tocarlas mientras durara ese reposo. Las consignas seguían calculándose bien por debajo, solo no se podían ver ni editar desde la tarjeta.
 
 Corregido: esa acción de reposo (`"fan_only"`/`"dry"`) solo se informa como tal cuando el modo que el usuario ELIGIÓ es literalmente Solo Ventilador/Deshumidificar; si el modo elegido es uno de temperatura real (Auto/calor/frío) y es el reposo inteligente el que decide ventilar de fondo, se informa `HVACAction.IDLE` en su lugar — no se pierde información real, el ventilador en marcha lo sigue diciendo `fan_mode` por separado.
 
-## 0.10.12
+## 0.10.12 (revertida en 0.10.15)
 **Bug real, confirmado en producción**: tras reiniciar HA Core, si algún actuador `climate.*` delegado cargaba después que la zona (o reportaba sus `hvac_modes` completos en un segundo evento tras el primero), las opciones del termostato se quedaban bloqueadas con la capacidad parcial detectada en el PRIMER evento — exigía recargar la zona a mano para arreglarse, en vez de resolverse sola en segundos como estaba pensado.
 
 Causa: `_handle_reactive_event` solo recalculaba `_attr_hvac_modes` mientras `_capability_pending` seguía activo — en cuanto se detectaba CUALQUIER capacidad (aunque fuera parcial), esa bandera se limpiaba para siempre y el evento reactivo dejaba de recalcular nada en los eventos siguientes. Solo el refresco periódico (`forecast_refresh_minutes`, 10 min por defecto) lo curaba solo — demasiado lento para notarlo al momento. Corregido: `_refresh_hvac_modes()` se recalcula en CADA evento reactivo, no solo mientras la capacidad esté pendiente por primera vez; `_reconcile_hvac_mode` ya se encargaba de que la propuesta de modo por defecto solo pase una vez, así que es seguro.

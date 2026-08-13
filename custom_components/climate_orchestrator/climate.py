@@ -1455,30 +1455,8 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
         # nada que hacer ahora mismo) — HA y cualquier puente Matter/
         # HomeKit distinguen los dos; confundirlos hace que un termostato
         # "apagado" se vea como "en espera" en la UI.
-        #
-        # "fan_only"/"dry" como ACCION (real_action) puede venir de dos
-        # sitios muy distintos (ver _PASSTHROUGH_MODES / _smart_idle_action):
-        # 1) el usuario ELIGIO ese modo a mano (self._attr_hvac_mode es
-        #    literalmente DRY/FAN_ONLY) — ahi SI hace falta reportar
-        #    HVACAction.DRYING/FAN, es la accion real y unica de la zona.
-        # 2) el reposo INTELIGENTE decide ventilar/deshumidificar de fondo
-        #    mientras el modo que el usuario eligio sigue siendo uno de
-        #    temperatura real (Auto/calor/frio) — aqui reportar FAN/DRYING
-        #    es tecnicamente cierto pero rompe la tarjeta de termostato
-        #    ESTANDAR de HA: en cuanto hvac_action no es calor/frio/idle,
-        #    esa tarjeta oculta el selector de las dos consignas y solo
-        #    enseña el nombre de la accion — dejando sin poder tocar
-        #    calor/frio mientras el reposo esta ventilando de fondo, aunque
-        #    las consignas (`target_temperature_low/high`) sigan bien
-        #    calculadas por debajo (ver `_update_target_attrs`). En este
-        #    caso se informa IDLE: no se pierde informacion real, el
-        #    ventilador en marcha ya lo dice `fan_mode` por separado.
-        if self._attr_hvac_mode == HVACMode.OFF:
-            self._attr_hvac_action = HVACAction.OFF
-        elif real_action in ("fan_only", "dry") and self._attr_hvac_mode not in _PASSTHROUGH_MODES:
-            self._attr_hvac_action = HVACAction.IDLE
-        else:
-            self._attr_hvac_action = _ACTION_MAP.get(real_action, HVACAction.IDLE)
+        self._attr_hvac_action = HVACAction.OFF if self._attr_hvac_mode == HVACMode.OFF \
+            else _ACTION_MAP.get(real_action, HVACAction.IDLE)
 
         # Humidificacion: funcion PARALELA a calor/frio/dry/fan_only, no un
         # hvac_mode mas — activa siempre que la zona no este apagada ni en

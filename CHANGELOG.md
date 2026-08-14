@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.10.17
+Nuevo: con puerta/ventana abierta, ya no se corta el ventilador — solo lo que de verdad desperdicia energía (calor, frío, deshumidificar: el compresor sigue trabajando). Aplica tanto si el modo Ventilador está elegido a mano como si es el reposo inteligente (Auto) el que lo estaría usando de todas formas — mismo criterio de elegibilidad que `_smart_idle_action` (el delegado tiene que soportar `fan_only` de verdad, detectado en vivo, y solo con el modo más automático de la zona). Antes, cualquier puerta/ventana abierta forzaba "en pausa" sin excepción, cortando también el ventilador aunque no costara nada tenerlo en marcha.
+
 ## 0.10.16
 Completa la reversión de 0.10.15: también deshecha 0.10.12 (`_handle_reactive_event` recalculando `hvac_modes` en cada evento reactivo, no solo al detectar capacidad por primera vez) — tocaba el mismo tipo de atributo (`hvac_modes`, expuesto directamente a HomeKit vía el puente Matter) que causó el problema de reconocimiento reportado. La carrera de arranque que arreglaba (zona bloqueada con capacidad parcial hasta recargarla a mano) vuelve a estar presente; sigue siendo un problema real, pero pendiente de una solución que no toque estos atributos de la forma que le confunde a Matter.
 

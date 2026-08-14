@@ -1330,23 +1330,44 @@ class ClimateOrchestratorZone(ClimateEntity, RestoreEntity):
             heat_target, cool_target = preset_heat, preset_cool
             self._reason = "apagado desde el termostato"
         elif real_door_open or window_alert:
-            action = "idle"
-            heat_target, cool_target = preset_heat, preset_cool
-            self._reason = "puerta/ventana abierta: en pausa" if real_door_open else (
+            window_reason = "puerta/ventana abierta" if real_door_open else (
                 f"posible ventana abierta (pendiente {self._window_detector.slope_deg_h:.1f}°C/h en contra "
-                "de lo pedido, sin sensor dedicado): en pausa"
+                "de lo pedido, sin sensor dedicado)"
             )
-            # A diferencia de un "idle" normal (que si respeta el
-            # anti-ciclado: no urge, solo esta dentro de margen), una
-            # puerta/ventana abierta SI es urgente: cortar de verdad ya,
-            # sin esperar al tiempo minimo encendido (`min_on_seconds`) —
-            # si no, un radiador que se acababa de encender se quedaba
-            # calentando con la ventana abierta hasta agotar ese margen.
-            # Al cerrarse, la propia entidad esta en la lista de sensores
-            # escuchados (ver async_added_to_hass): dispara una reevaluacion
-            # inmediata y la zona retoma el calculo normal ella sola, sin
-            # nada especial que "reactivar".
-            force_off = True
+            # Calentar/enfriar (y deshumidificar, que sigue haciendo
+            # trabajar el compresor) con una puerta/ventana abierta
+            # desperdicia energia de verdad — eso SI se corta. Ventilar no
+            # tiene ese coste (solo mueve aire), asi que se sigue
+            # permitiendo: en modo Ventilador elegido a mano, o si el
+            # reposo inteligente ya lo estaria usando (mismo criterio que
+            # `_smart_idle_action`: solo con el modo mas automatico de la
+            # zona, y solo si algun delegado de verdad soporta "fan_only").
+            can_fan = "fan_only" in self._last_full_capability and (
+                self._attr_hvac_mode == HVACMode.FAN_ONLY
+                or self._attr_hvac_mode == self._default_hvac_mode(self._last_full_capability)
+            )
+            if can_fan:
+                action = "fan_only"
+                heat_target = cool_target = None
+                self._reason = f"{window_reason}: ventilando (calor/frío en pausa)"
+            else:
+                action = "idle"
+                heat_target, cool_target = preset_heat, preset_cool
+                self._reason = f"{window_reason}: en pausa"
+                # A diferencia de un "idle" normal (que si respeta el
+                # anti-ciclado: no urge, solo esta dentro de margen), una
+                # puerta/ventana abierta SI es urgente: cortar de verdad ya,
+                # sin esperar al tiempo minimo encendido (`min_on_seconds`)
+                # — si no, un radiador que se acababa de encender se
+                # quedaba calentando con la ventana abierta hasta agotar
+                # ese margen. Al cerrarse, la propia entidad esta en la
+                # lista de sensores escuchados (ver async_added_to_hass):
+                # dispara una reevaluacion inmediata y la zona retoma el
+                # calculo normal ella sola, sin nada especial que
+                # "reactivar". El ventilador (rama de arriba) no lo
+                # necesita: no hay nada que "ciclar", nunca se enciende de
+                # mas por esperar.
+                force_off = True
         elif self._attr_hvac_mode in _PASSTHROUGH_MODES:
             # Elegido A MANO desde el termostato (dry/fan_only) — el
             # hvac_mode de la zona SI pasa a mostrar esto de verdad,
